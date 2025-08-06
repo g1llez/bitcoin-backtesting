@@ -360,14 +360,60 @@ function updateSiteSummaryDisplay(summary) {
     card.style.display = 'block';
     title.textContent = `Synthèse du Site: ${summary.site_name}`;
     
-    // Afficher les boutons d'action
+    // Afficher les boutons d'action seulement s'il y a des machines
     const multiOptimalBtn = document.getElementById('multiOptimalBtn');
+    const globalOptimizationBtn = document.getElementById('globalOptimizationBtn');
     const manualRatioBtn = document.getElementById('manualRatioBtn');
     const nominalRatioBtn = document.getElementById('nominalRatioBtn');
     
-    if (multiOptimalBtn) multiOptimalBtn.style.display = 'inline-block';
-    if (manualRatioBtn) manualRatioBtn.style.display = 'inline-block';
-    if (nominalRatioBtn) nominalRatioBtn.style.display = 'inline-block';
+    console.log('Boutons trouvés:', {
+        multiOptimal: !!multiOptimalBtn,
+        globalOptimization: !!globalOptimizationBtn,
+        manualRatio: !!manualRatioBtn,
+        nominalRatio: !!nominalRatioBtn
+    });
+    
+    const machineCount = summary.machines.length;
+    console.log('Nombre de machines dans le site:', machineCount);
+    console.log('Machines:', summary.machines);
+    
+    if (machineCount === 0) {
+        console.log('Aucune machine - masquage de tous les boutons');
+        // Masquer tous les boutons s'il n'y a pas de machines
+        if (multiOptimalBtn) {
+            multiOptimalBtn.style.display = 'none';
+            console.log('Bouton multiOptimal masqué');
+        }
+        if (globalOptimizationBtn) {
+            globalOptimizationBtn.style.display = 'none';
+            console.log('Bouton globalOptimization masqué');
+        }
+        if (manualRatioBtn) {
+            manualRatioBtn.style.display = 'none';
+            console.log('Bouton manualRatio masqué');
+        }
+        if (nominalRatioBtn) {
+            nominalRatioBtn.style.display = 'none';
+            console.log('Bouton nominalRatio masqué');
+        }
+    } else {
+        console.log(`${machineCount} machine(s) - affichage des boutons`);
+        // Afficher les boutons selon le nombre de machines
+        if (multiOptimalBtn) multiOptimalBtn.style.display = 'inline-block';
+        if (manualRatioBtn) manualRatioBtn.style.display = 'inline-block';
+        if (nominalRatioBtn) nominalRatioBtn.style.display = 'inline-block';
+        
+        // Afficher l'optimisation globale seulement s'il y a plus d'une machine
+        if (globalOptimizationBtn) {
+            if (machineCount > 1) {
+                globalOptimizationBtn.style.display = 'inline-block';
+                globalOptimizationBtn.disabled = false;
+                globalOptimizationBtn.title = `Optimisation globale pour ${machineCount} machines`;
+            } else {
+                globalOptimizationBtn.style.display = 'none';
+            }
+        }
+    }
     
     // Vider le tableau
     tbody.innerHTML = '';
@@ -483,39 +529,525 @@ function updateSiteSummaryDisplay(summary) {
     tfoot.innerHTML = footer;
 }
 
-// Load Multi-Machine Optimal Ratios
-async function loadMultiOptimal() {
+// Fonction supprimée - remplacée par applyOptimalRatios()
+
+// Load Global Site Optimization
+async function loadGlobalOptimization() {
     try {
         if (!currentSiteId) {
             showNotification('Aucun site sélectionné', 'error');
             return;
         }
         
-        showNotification('Calcul et application des ratios optimaux...', 'info');
+        showNotification('Optimisation globale en cours... (brute force grid search)', 'info');
         
-        // Utiliser le nouvel endpoint qui calcule ET applique les ratios optimaux
-        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/apply-optimal-ratios`, {
+        // Appeler l'endpoint d'optimisation globale
+        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/global-optimization`, {
             method: 'POST'
         });
         
         if (!response.ok) {
-            throw new Error('Failed to apply optimal ratios');
+            throw new Error('Failed to perform global optimization');
         }
         
         const result = await response.json();
         
-        // Mettre à jour l'affichage avec les résultats
-        updateMultiOptimalDisplay(result.result);
+        // Afficher les résultats
+        showGlobalOptimizationResults(result);
         
         // Recharger la synthèse du site pour refléter les changements
         await loadSiteSummary(currentSiteId);
         
-        showNotification(`Optimisation terminée! ${result.total_machines} machine(s) mises à jour.`, 'success');
+        showNotification(`Optimisation globale terminée! ${result.combinations_tested} combinaisons testées. Profit optimal: $${result.best_profit.toFixed(2)}/jour`, 'success');
         
     } catch (error) {
-        console.error('Error applying optimal ratios:', error);
-        showNotification('Erreur lors de l\'optimisation automatique', 'error');
+        console.error('Error performing global optimization:', error);
+        showNotification('Erreur lors de l\'optimisation globale', 'error');
     }
+}
+
+// Show Global Optimization Results
+function showGlobalOptimizationResults(result) {
+    // Créer une modal pour afficher les résultats détaillés
+    const modalHtml = `
+        <div class="modal fade" id="globalOptimizationModal" tabindex="-1">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-globe"></i> Résultats de l'Optimisation Globale
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6><i class="fas fa-chart-line"></i> Résumé</h6>
+                                <ul class="list-group list-group-flush">
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Site:</span>
+                                        <strong>${result.site_name}</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Combinaisons testées:</span>
+                                        <strong>${result.combinations_tested}</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Profit optimal:</span>
+                                        <strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Hashrate total:</span>
+                                        <strong>${result.results.total_hashrate.toFixed(2)} TH/s</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Puissance totale:</span>
+                                        <strong>${Math.round(result.results.total_power)}W</strong>
+                                    </li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <h6><i class="fas fa-cogs"></i> Ratios Optimaux</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Machine</th>
+                                                <th>Ratio</th>
+                                                <th>Hashrate</th>
+                                                <th>Puissance</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${result.results.machine_performances.map(machine => `
+                                                <tr>
+                                                    <td>${machine.name}</td>
+                                                    <td><strong>${machine.ratio.toFixed(3)}</strong></td>
+                                                    <td>${machine.hashrate.toFixed(2)} TH/s</td>
+                                                    <td>${Math.round(machine.power)}W</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt-4">
+                            <div class="col-12">
+                                <h6><i class="fas fa-chart-area"></i> Visualisation 3D des Sweet Spots</h6>
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Graphique 3D :</strong> Visualisez les zones de profit optimal en 3D. Les pics représentent les sweet spots.
+                                </div>
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div id="optimization3DChart" style="width: 100%; height: 500px; min-height: 500px;"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        </div>
+                        
+
+                        
+                        <div class="row mt-4">
+                            <div class="col-12">
+                                <h6><i class="fas fa-download"></i> Export des Données</h6>
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Analyse des sweet spots :</strong> Téléchargez le fichier CSV pour analyser toutes les combinaisons testées et identifier les zones de profit optimal.
+                                </div>
+                                <button class="btn btn-success" onclick="downloadOptimizationCSV(${JSON.stringify(result).replace(/"/g, '&quot;')})">
+                                    <i class="fas fa-download"></i> Télécharger CSV des Résultats
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Supprimer l'ancienne modal si elle existe
+    const existingModal = document.getElementById('globalOptimizationModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Ajouter la nouvelle modal au body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Afficher la modal
+    const modal = new bootstrap.Modal(document.getElementById('globalOptimizationModal'));
+    modal.show();
+    
+    // Créer le graphique 3D après que la modal soit affichée
+    setTimeout(() => {
+        createOptimization3DChart(result);
+    }, 100);
+}
+
+// Download optimization results as CSV
+function downloadOptimizationCSV(result) {
+    // Créer l'en-tête CSV avec les noms des machines
+    const machineNames = result.results.machine_performances.map(m => m.name);
+    const header = ['Combinaison', ...machineNames.map(name => `Ratio_${name}`), 'Profit_Total_$jour', 'Hashrate_Total_THs', 'Puissance_Totale_W'];
+    
+    // Générer les données CSV avec les vraies données
+    const csvData = [];
+    
+    // Trier les résultats par profit décroissant pour voir les meilleures combinaisons en premier
+    const sortedResults = result.all_results.sort((a, b) => b.daily_profit - a.daily_profit);
+    
+    // Ajouter TOUTES les combinaisons testées
+    for (let i = 0; i < sortedResults.length; i++) {
+        const combinationResult = sortedResults[i];
+        const isOptimal = combinationResult.daily_profit === result.best_profit;
+        
+        const row = [
+            isOptimal ? 'OPTIMAL' : `Test_${i + 1}`,
+            ...combinationResult.combination.map(r => r.toFixed(3)),
+            combinationResult.daily_profit.toFixed(4),
+            combinationResult.total_hashrate.toFixed(2),
+            Math.round(combinationResult.total_power)
+        ];
+        csvData.push(row);
+    }
+    
+    // Créer le contenu CSV
+    const csvContent = [header, ...csvData].map(row => row.join(',')).join('\n');
+    
+    // Créer et télécharger le fichier
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `optimisation_globale_${result.site_name}_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// Create 3D optimization visualization with Plotly
+function createOptimization3DChart(result) {
+    console.log('Creating 3D chart with result:', result);
+    
+    const container = document.getElementById('optimization3DChart');
+    if (!container) {
+        console.error('Container optimization3DChart not found');
+        return;
+    }
+    
+    // Vérifier si Plotly est disponible
+    if (typeof Plotly === 'undefined') {
+        console.error('Plotly is not loaded');
+        container.innerHTML = '<div class="alert alert-warning">Plotly n\'est pas chargé. Utilisation du graphique 2D de fallback.</div>';
+        createFallback2DChart(container, result);
+        return;
+    }
+    
+    // Nettoyer le conteneur et s'assurer qu'il a une taille définie
+    container.innerHTML = '';
+    container.style.width = '100%';
+    container.style.height = '500px';
+    container.style.minHeight = '500px';
+    container.style.position = 'relative';
+    container.style.overflow = 'hidden';
+    
+    // Préparer les données pour la visualisation 3D
+    let data = result.all_results;
+    
+    // Si all_results n'est pas disponible, utiliser les données de results
+    if (!data || data.length === 0) {
+        console.log('all_results non disponible, utilisation de results');
+        data = [{
+            combination: result.results.machine_performances.map(m => m.ratio),
+            daily_profit: result.results.daily_profit,
+            total_hashrate: result.results.total_hashrate,
+            total_power: result.results.total_power
+        }];
+    }
+    
+    console.log('Structure de result:', Object.keys(result));
+    console.log('all_results existe:', !!result.all_results);
+    console.log('Premier élément de all_results:', result.all_results ? result.all_results[0] : 'undefined');
+    console.log('Data for 3D chart:', data);
+    
+    // Extraire les coordonnées X, Y, Z pour le graphique 3D
+    const x = data.map(d => d.combination[0]); // Ratio Machine 1
+    const y = data.map(d => d.combination[1]); // Ratio Machine 2
+    const z = data.map(d => d.daily_profit);   // Profit
+    const hashrates = data.map(d => d.total_hashrate);
+    const powers = data.map(d => d.total_power);
+    
+    console.log('Données pour graphique 3D:');
+    console.log('Nombre de points:', data.length);
+    console.log('Ratios X (Machine 1):', x);
+    console.log('Ratios Y (Machine 2):', y);
+    console.log('Profits Z:', z);
+    console.log('Min profit:', Math.min(...z));
+    console.log('Max profit:', Math.max(...z));
+    console.log('Combinaison optimale attendue:', result.best_combination);
+    console.log('Profit optimal:', result.best_profit);
+    
+    // Vérifier si la combinaison optimale est présente
+    const optimalFound = data.find(d => 
+        Math.abs(d.combination[0] - Object.values(result.best_combination)[0]) < 0.001 &&
+        Math.abs(d.combination[1] - Object.values(result.best_combination)[1]) < 0.001
+    );
+    console.log('Combinaison optimale trouvée dans les données:', optimalFound);
+    
+    // Vérifier si les données correspondent au profit optimal
+    const maxProfitInData = Math.max(...z);
+    console.log('Profit max dans les données:', maxProfitInData);
+    console.log('Profit optimal dans result:', result.best_profit);
+    console.log('Correspondance:', Math.abs(maxProfitInData - result.best_profit) < 0.01);
+    
+    // Créer les couleurs basées sur le profit (adaptées au thème sombre)
+    const minProfit = Math.min(...z);
+    const maxProfit = Math.max(...z);
+    const colors = z.map(profit => {
+        const normalized = (profit - minProfit) / (maxProfit - minProfit);
+        // Utiliser des couleurs plus vives qui ressortent sur fond sombre
+        if (normalized > 0.8) {
+            return '#00ff88'; // Vert vif pour les profits élevés
+        } else if (normalized > 0.6) {
+            return '#ffff00'; // Jaune pour les profits moyens
+        } else if (normalized > 0.4) {
+            return '#ff8800'; // Orange pour les profits faibles
+        } else {
+            return '#ff4444'; // Rouge pour les pertes
+        }
+    });
+    
+    // Créer les textes pour les tooltips
+    const texts = data.map((d, i) => 
+        `Ratio Machine 1: ${d.combination[0]}<br>` +
+        `Ratio Machine 2: ${d.combination[1]}<br>` +
+        `Profit: $${d.daily_profit.toFixed(2)}/jour<br>` +
+        `Hashrate: ${d.total_hashrate.toFixed(2)} TH/s<br>` +
+        `Puissance: ${d.total_power}W`
+    );
+    
+    // Créer le graphique 3D avec Plotly
+    const trace = {
+        x: x,
+        y: y,
+        z: z,
+        mode: 'markers',
+        type: 'scatter3d',
+        marker: {
+            size: 12, // Points plus gros pour mieux les voir
+            color: colors,
+            opacity: 1.0, // Opacité maximale
+            colorscale: 'Viridis',
+            colorbar: {
+                title: 'Profit ($/jour)',
+                titleside: 'right'
+            }
+        },
+        text: texts,
+        hovertemplate: '<b>%{text}</b><extra></extra>'
+    };
+    
+    const layout = {
+        title: {
+            text: `Visualisation 3D des Sweet Spots - Profit Optimal: $${result.best_profit.toFixed(2)}/jour`,
+            font: { size: 16, color: '#ffffff' }
+        },
+        paper_bgcolor: '#2d3748',
+        plot_bgcolor: '#2d3748',
+        scene: {
+            xaxis: {
+                title: 'Ratio Machine 1',
+                range: [Math.min(...x), Math.max(...x)],
+                gridcolor: '#4a5568',
+                zerolinecolor: '#4a5568',
+                titlefont: { color: '#ffffff' },
+                tickfont: { color: '#ffffff' }
+            },
+            yaxis: {
+                title: 'Ratio Machine 2',
+                range: [Math.min(...y), Math.max(...y)],
+                gridcolor: '#4a5568',
+                zerolinecolor: '#4a5568',
+                titlefont: { color: '#ffffff' },
+                tickfont: { color: '#ffffff' }
+            },
+            zaxis: {
+                title: 'Profit ($/jour)',
+                range: [Math.min(...z) * 1.1, Math.max(...z) * 1.1], // Utiliser la vraie plage des données
+                gridcolor: '#4a5568',
+                zerolinecolor: '#4a5568',
+                titlefont: { color: '#ffffff' },
+                tickfont: { color: '#ffffff' }
+            },
+            camera: {
+                eye: { x: 2.5, y: 2.5, z: 0.8 } // Vue encore plus large et moins haute
+            },
+            aspectmode: 'manual',
+            aspectratio: { x: 1, y: 1, z: 0.5 } // Forcer un ratio large et moins haut
+        },
+        autosize: true,
+        margin: { l: 0, r: 0, b: 0, t: 50 }
+    };
+    
+    const config = {
+        responsive: true,
+        displayModeBar: true,
+        modeBarButtonsToRemove: ['pan2d', 'lasso2d', 'select2d'],
+        displaylogo: false,
+        toImageButtonOptions: {
+            format: 'png',
+            filename: 'optimization_3d',
+            height: 500,
+            width: 800,
+            scale: 1
+        }
+    };
+    
+    // Créer le graphique
+    try {
+        console.log('Creating Plotly chart with trace:', trace);
+        console.log('Layout:', layout);
+        
+        // Note: Le warning Canvas2D est normal pour Plotly et n'affecte pas les performances
+        // Plotly gère automatiquement l'optimisation du canvas
+        
+        Plotly.newPlot(container, [trace], layout, config).then(function() {
+            console.log('Plotly chart created successfully');
+            
+            // Ajouter un événement pour identifier le point optimal
+            container.on('plotly_click', function(plotData) {
+                const point = plotData.points[0];
+                const index = point.pointIndex;
+                
+                // Récupérer les données du point depuis l'événement Plotly
+                const clickedX = point.x;
+                const clickedY = point.y;
+                const clickedZ = point.z;
+                
+                console.log('Point cliqué:', {
+                    ratio1: clickedX,
+                    ratio2: clickedY,
+                    profit: clickedZ
+                });
+                
+                // Vérifier si c'est le point optimal
+                if (Math.abs(clickedZ - result.best_profit) < 0.01) {
+                    console.log('Point optimal cliqué!');
+                    // Mettre en évidence le point optimal
+                    const update = {
+                        marker: {
+                            size: Array(data.length).fill(8).map((size, i) => 
+                                i === index ? 15 : size
+                            ),
+                            color: Array(data.length).fill().map((_, i) => 
+                                i === index ? 'red' : colors[i]
+                            )
+                        }
+                    };
+                    Plotly.restyle(container, update);
+                }
+            });
+        }).catch(function(error) {
+            console.error('Error creating Plotly chart:', error);
+            container.innerHTML = '<div class="alert alert-danger">Erreur lors de la création du graphique 3D: ' + error.message + '</div>';
+        });
+    } catch (error) {
+        console.error('Error in createOptimization3DChart:', error);
+        container.innerHTML = '<div class="alert alert-danger">Erreur lors de la création du graphique 3D: ' + error.message + '</div>';
+    }
+}
+
+// Create fallback 2D chart if Plotly is not available
+function createFallback2DChart(container, result) {
+    console.log('Creating fallback 2D chart');
+    
+    const data = result.all_results;
+    const x = data.map(d => d.combination[0]);
+    const y = data.map(d => d.combination[1]);
+    const z = data.map(d => d.daily_profit);
+    
+    const minProfit = Math.min(...z);
+    const maxProfit = Math.max(...z);
+    
+    // Créer un graphique 2D simple avec Chart.js
+    const ctx = document.createElement('canvas');
+    ctx.id = 'fallback2DChart';
+    container.appendChild(ctx);
+    
+    const config = {
+        type: 'scatter',
+        data: {
+            datasets: [{
+                label: 'Profit ($/jour)',
+                data: data.map((d, i) => ({
+                    x: d.combination[0],
+                    y: d.combination[1],
+                    r: Math.max(3, Math.min(15, (d.daily_profit - minProfit) / (maxProfit - minProfit) * 12 + 3))
+                })),
+                backgroundColor: data.map(d => {
+                    const normalized = (d.daily_profit - minProfit) / (maxProfit - minProfit);
+                    return `rgba(${255 * (1 - normalized)}, ${255 * normalized}, 0, 0.7)`;
+                }),
+                borderColor: data.map(d => {
+                    const normalized = (d.daily_profit - minProfit) / (maxProfit - minProfit);
+                    return `rgba(${255 * (1 - normalized)}, ${255 * normalized}, 0, 1)`;
+                }),
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: `Visualisation 2D des Sweet Spots - Profit Optimal: $${result.best_profit.toFixed(2)}/jour`
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const data = result.all_results[context.dataIndex];
+                            return [
+                                `Ratio Machine 1: ${data.combination[0]}`,
+                                `Ratio Machine 2: ${data.combination[1]}`,
+                                `Profit: $${data.daily_profit.toFixed(2)}/jour`,
+                                `Hashrate: ${data.total_hashrate.toFixed(2)} TH/s`,
+                                `Puissance: ${data.total_power}W`
+                            ];
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    position: 'bottom',
+                    title: {
+                        display: true,
+                        text: 'Ratio Machine 1'
+                    }
+                },
+                y: {
+                    type: 'linear',
+                    position: 'left',
+                    title: {
+                        display: true,
+                        text: 'Ratio Machine 2'
+                    }
+                }
+            }
+        }
+    };
+    
+    createChart('fallback2DChart', config);
 }
 
 // Update Multi-Optimal Display
@@ -1564,29 +2096,46 @@ function openConfiguration() {
 
 async function loadConfiguration() {
     try {
+        console.log('Chargement de la configuration...');
+        
         // Charger la configuration depuis l'API
         const response = await fetch(`${API_BASE}/config/app/settings`);
         const data = await response.json();
         
-        // Remplir les champs avec les valeurs de la DB
+        console.log('Données reçues:', data);
+        console.log('Settings:', data.settings);
+        
+        // Remplir les champs avec les valeurs de la DB (configuration globale)
         if (data.settings.braiins_token) {
+            console.log('Setting braiins_token:', data.settings.braiins_token);
             document.getElementById('braiinsToken').value = data.settings.braiins_token;
         }
+        if (data.settings.preferred_currency) {
+            console.log('Setting preferred_currency:', data.settings.preferred_currency);
+            document.getElementById('preferredCurrency').value = data.settings.preferred_currency;
+        }
         if (data.settings.electricity_tier1_rate) {
+            console.log('Setting electricity_tier1_rate:', data.settings.electricity_tier1_rate);
             document.getElementById('electricityTier1Rate').value = data.settings.electricity_tier1_rate;
         }
         if (data.settings.electricity_tier1_limit) {
+            console.log('Setting electricity_tier1_limit:', data.settings.electricity_tier1_limit);
             document.getElementById('electricityTier1Limit').value = data.settings.electricity_tier1_limit;
         }
         if (data.settings.electricity_tier2_rate) {
+            console.log('Setting electricity_tier2_rate:', data.settings.electricity_tier2_rate);
             document.getElementById('electricityTier2Rate').value = data.settings.electricity_tier2_rate;
         }
-        if (data.settings.preferred_currency) {
-            document.getElementById('preferredCurrency').value = data.settings.preferred_currency;
-        }
+        
+        console.log('Configuration chargée avec succès');
     } catch (error) {
         console.error('Erreur lors du chargement de la configuration:', error);
-        showNotification('Erreur lors du chargement de la configuration', 'error');
+        showNotification(error.message, 'error');
+        // Fermer le modal en cas d'erreur
+        const modal = bootstrap.Modal.getInstance(document.getElementById('configModal'));
+        if (modal) {
+            modal.hide();
+        }
     }
 }
 
@@ -1600,7 +2149,7 @@ async function saveConfiguration() {
             preferred_currency: document.getElementById('preferredCurrency').value
         };
         
-        // Sauvegarder dans la DB via l'API
+        // Sauvegarder la configuration globale
         const response = await fetch(`${API_BASE}/config/app/settings`, {
             method: 'POST',
             headers: {
@@ -1609,27 +2158,33 @@ async function saveConfiguration() {
             body: JSON.stringify(config)
         });
         
-        if (response.ok) {
-            // Fermer le modal
-            bootstrap.Modal.getInstance(document.getElementById('configModal')).hide();
-            showNotification('Configuration sauvegardée!', 'success');
-            
-            // Recharger les données de marché avec la nouvelle configuration
-            loadMarketData();
-            
-            // Recalculer l'optimisation avec la nouvelle configuration
-            if (currentMachineId) {
-                await calculateOptimalAutomatically();
-            }
-            
-            // Recharger le graphique d'analyse des ratios si une machine est sélectionnée
-            if (currentMachineId && (currentObjectType === 'machine' || currentObjectType === 'template')) {
-                const templateId = currentObjectData?.template_id || currentMachineId;
-                loadRatioAnalysisChart(templateId);
-            }
-        } else {
-            throw new Error('Erreur lors de la sauvegarde');
+        if (!response.ok) {
+            throw new Error('Erreur lors de la sauvegarde de la configuration globale');
         }
+        
+        // Fermer le modal
+        bootstrap.Modal.getInstance(document.getElementById('configModal')).hide();
+        showNotification('Configuration sauvegardée!', 'success');
+        
+        // Recharger les données de marché avec la nouvelle configuration
+        loadMarketData();
+        
+        // Recalculer l'optimisation avec la nouvelle configuration
+        if (currentMachineId) {
+            await calculateOptimalAutomatically();
+        }
+        
+        // Recharger le graphique d'analyse des ratios si une machine est sélectionnée
+        if (currentMachineId && (currentObjectType === 'machine' || currentObjectType === 'template')) {
+            const templateId = currentObjectData?.template_id || currentMachineId;
+            loadRatioAnalysisChart(templateId);
+        }
+        
+        // Recharger le résumé du site si un site est sélectionné
+        if (currentSiteId) {
+            loadSiteSummary(currentSiteId);
+        }
+        
     } catch (error) {
         console.error('Erreur lors de la sauvegarde:', error);
         showNotification('Erreur lors de la sauvegarde de la configuration', 'error');
@@ -1850,20 +2405,64 @@ async function openSiteModal(siteId = null) {
 // Load Site Data
 async function loadSiteData(siteId) {
     try {
+        console.log('Chargement des données du site:', siteId);
+        
         const response = await fetch(`${API_BASE}/sites/${siteId}`);
         if (!response.ok) {
             throw new Error('Failed to load site');
         }
         
         const site = await response.json();
+        console.log('Données du site reçues:', site);
         
-        document.getElementById('siteName').value = site.name;
-        document.getElementById('siteAddress').value = site.address || '';
-        document.getElementById('siteBraiinsToken').value = site.braiins_token || '';
-        document.getElementById('siteTier1Rate').value = site.electricity_tier1_rate;
-        document.getElementById('siteTier1Limit').value = site.electricity_tier1_limit;
-        document.getElementById('siteTier2Rate').value = site.electricity_tier2_rate;
-        document.getElementById('siteCurrency').value = site.preferred_currency;
+        const siteNameField = document.getElementById('siteName');
+        const siteAddressField = document.getElementById('siteAddress');
+        const siteBraiinsTokenField = document.getElementById('siteBraiinsToken');
+        const siteTier1RateField = document.getElementById('siteModalTier1Rate');
+        const siteTier1LimitField = document.getElementById('siteModalTier1Limit');
+        const siteTier2RateField = document.getElementById('siteModalTier2Rate');
+        const siteCurrencyField = document.getElementById('siteCurrency');
+        
+        console.log('Champs trouvés:', {
+            siteName: !!siteNameField,
+            siteAddress: !!siteAddressField,
+            siteBraiinsToken: !!siteBraiinsTokenField,
+            siteTier1Rate: !!siteTier1RateField,
+            siteTier1Limit: !!siteTier1LimitField,
+            siteTier2Rate: !!siteTier2RateField,
+            siteCurrency: !!siteCurrencyField
+        });
+        
+        if (siteNameField) siteNameField.value = site.name;
+        if (siteAddressField) siteAddressField.value = site.address || '';
+        if (siteBraiinsTokenField) siteBraiinsTokenField.value = site.braiins_token || '';
+        if (siteTier1RateField) siteTier1RateField.value = site.electricity_tier1_rate;
+        if (siteTier1LimitField) siteTier1LimitField.value = site.electricity_tier1_limit;
+        if (siteTier2RateField) siteTier2RateField.value = site.electricity_tier2_rate;
+        if (siteCurrencyField) siteCurrencyField.value = site.preferred_currency;
+        
+        // Vérifier les valeurs des champs après assignation
+        console.log('Valeurs des champs après assignation:', {
+            siteName: siteNameField?.value,
+            siteAddress: siteAddressField?.value,
+            siteBraiinsToken: siteBraiinsTokenField?.value,
+            siteTier1Rate: siteTier1RateField?.value,
+            siteTier1Limit: siteTier1LimitField?.value,
+            siteTier2Rate: siteTier2RateField?.value,
+            siteCurrency: siteCurrencyField?.value
+        });
+        
+        console.log('Valeurs assignées:', {
+            name: site.name,
+            address: site.address,
+            braiins_token: site.braiins_token,
+            electricity_tier1_rate: site.electricity_tier1_rate,
+            electricity_tier1_limit: site.electricity_tier1_limit,
+            electricity_tier2_rate: site.electricity_tier2_rate,
+            preferred_currency: site.preferred_currency
+        });
+        
+        console.log('Champs remplis avec les valeurs du site');
         
     } catch (error) {
         console.error('Error loading site:', error);
@@ -1878,9 +2477,9 @@ async function saveSite() {
             name: document.getElementById('siteName').value,
             address: document.getElementById('siteAddress').value,
             braiins_token: document.getElementById('siteBraiinsToken').value,
-            electricity_tier1_rate: parseFloat(document.getElementById('siteTier1Rate').value),
-            electricity_tier1_limit: parseInt(document.getElementById('siteTier1Limit').value),
-            electricity_tier2_rate: parseFloat(document.getElementById('siteTier2Rate').value),
+            electricity_tier1_rate: parseFloat(document.getElementById('siteModalTier1Rate').value),
+            electricity_tier1_limit: parseInt(document.getElementById('siteModalTier1Limit').value),
+            electricity_tier2_rate: parseFloat(document.getElementById('siteModalTier2Rate').value),
             preferred_currency: document.getElementById('siteCurrency').value
         };
         
@@ -2962,35 +3561,7 @@ async function confirmManualRatio() {
 }
 
 // Reset to Nominal Ratio
-async function resetToNominalRatio() {
-    try {
-        if (!currentSiteId) {
-            showNotification('Aucun site sélectionné', 'error');
-            return;
-        }
-        
-        showNotification('Réinitialisation au ratio nominal...', 'info');
-        
-        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/reset-to-nominal`, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to reset to nominal ratio');
-        }
-        
-        const result = await response.json();
-        
-        // Recharger la synthèse du site pour refléter les changements
-        await loadSiteSummary(currentSiteId);
-        
-        showNotification(`Ratio nominal (1.0) appliqué avec succès à ${result.total_machines} machine(s)!`, 'success');
-        
-    } catch (error) {
-        console.error('Error resetting to nominal ratio:', error);
-        showNotification('Erreur lors de la réinitialisation au ratio nominal', 'error');
-    }
-}
+// Fonction supprimée - remplacée par resetToNominal()
 
 // Initialize navigation handling
 function initializeNavigation() {
@@ -3238,7 +3809,7 @@ let configurationData = {
 };
 
 // Load configuration from API or localStorage
-async function loadConfiguration() {
+async function loadBacktestConfiguration() {
     try {
         // Try to load from API first
         const response = await fetch(`${API_BASE}/config`);
@@ -3261,7 +3832,7 @@ async function loadConfiguration() {
 }
 
 // Save configuration to localStorage and optionally to API
-async function saveConfiguration() {
+async function saveBacktestConfiguration() {
     try {
         // Save to localStorage
         localStorage.setItem('backtestConfiguration', JSON.stringify(configurationData));
@@ -3362,7 +3933,7 @@ function isValidFormData(formData) {
 // Refresh configuration from API
 async function refreshConfiguration() {
     try {
-        await loadConfiguration();
+        await loadBacktestConfiguration();
         showNotification('Configuration actualisée', 'success');
     } catch (error) {
         showNotification('Erreur lors de l\'actualisation', 'error');
@@ -3376,6 +3947,74 @@ function getCurrentConfiguration() {
 
 // Initialize configuration when backtest section is shown
 function initializeBacktestConfiguration() {
-    loadConfiguration();
+    loadBacktestConfiguration();
+}
+
+async function applyOptimalRatios() {
+    if (!currentSiteId) {
+        showNotification('Aucun site sélectionné', 'error');
+        return;
+    }
+
+    try {
+        showNotification('Optimisation individuelle en cours...', 'info');
+        
+        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/apply-optimal-ratios`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Erreur lors de l\'optimisation individuelle');
+        }
+
+        const data = await response.json();
+        
+        // Recharger la synthèse du site pour refléter les changements
+        await loadSiteSummary(currentSiteId);
+        
+        showNotification(`Optimisation individuelle appliquée avec succès à ${data.total_machines} machine(s)`, 'success');
+        
+    } catch (error) {
+        console.error('Erreur:', error);
+        showNotification('Erreur lors de l\'optimisation individuelle: ' + error.message, 'error');
+    }
+}
+
+async function resetToNominal() {
+    if (!currentSiteId) {
+        showNotification('Aucun site sélectionné', 'error');
+        return;
+    }
+
+    try {
+        showNotification('Réinitialisation au ratio nominal...', 'info');
+        
+        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/reset-to-nominal`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Erreur lors de la remise à nominal');
+        }
+
+        const data = await response.json();
+        
+        // Recharger la synthèse du site pour refléter les changements
+        await loadSiteSummary(currentSiteId);
+        
+        showNotification(`Ratios remis à nominal pour ${data.total_machines} machine(s)`, 'success');
+        
+    } catch (error) {
+        console.error('Erreur:', error);
+        showNotification('Erreur lors de la remise à nominal: ' + error.message, 'error');
+    }
 }
 

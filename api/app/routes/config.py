@@ -80,9 +80,6 @@ async def get_app_settings(db: Session = Depends(get_db)):
         "defaults": {
             "theme": "dark",
             "braiins_token": "",
-            "electricity_tier1_rate": "0.0730",
-            "electricity_tier2_rate": "0.0890",
-            "electricity_tier1_limit": "40",
             "preferred_currency": "CAD"
         }
     }

@@ -16,9 +16,9 @@ CREATE TABLE mining_sites (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     address TEXT,
-    electricity_tier1_rate DECIMAL(5,4) DEFAULT 0.0730, -- Prix pour premier 40kWh (Québec)
-    electricity_tier2_rate DECIMAL(5,4) DEFAULT 0.0890, -- Prix après 40kWh (Québec)
-    electricity_tier1_limit INTEGER DEFAULT 40, -- Limite en kWh
+    electricity_tier1_rate DECIMAL(5,4), -- Prix pour premier palier (kWh)
+    electricity_tier2_rate DECIMAL(5,4), -- Prix après premier palier (kWh)
+    electricity_tier1_limit INTEGER, -- Limite en kWh
     braiins_token VARCHAR(255), -- Token pour l'API Braiins
     preferred_currency VARCHAR(3) DEFAULT 'CAD',
     created_at TIMESTAMP DEFAULT NOW(),
@@ -41,9 +41,9 @@ INSERT INTO app_config (key, value, description) VALUES
 ('braiins_api_url', 'https://pool.braiins.com/stats/json/btc', 'URL de l''API Braiins Pool'),
 ('coingecko_api_url', 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,cad', 'URL de l''API CoinGecko');
 
--- Site par défaut
-INSERT INTO mining_sites (name, address, electricity_tier1_rate, electricity_tier2_rate) VALUES
-('Site Principal', 'Adresse par défaut', 0.0730, 0.0890);
+-- Site par défaut (sans valeurs d'électricité par défaut)
+INSERT INTO mining_sites (name, address) VALUES
+('Site Principal', 'Adresse par défaut');
 
 -- Fonction pour calculer le coût d'électricité avec paliers
 CREATE OR REPLACE FUNCTION calculate_electricity_cost_tiered(

@@ -13,7 +13,7 @@ router = APIRouter()
 @router.get("/sites", response_model=List[MiningSite])
 async def get_sites(db: Session = Depends(get_db)):
     """Récupérer tous les sites de minage"""
-    sites = db.query(models.MiningSite).all()
+    sites = db.query(models.MiningSite).order_by(models.MiningSite.id).all()
     return sites
 
 @router.get("/sites/{site_id}", response_model=MiningSite)
@@ -630,7 +630,8 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
             
             # Créer une ligne pour chaque machine individuelle
             for i in range(instance.quantity):
-                machine_name = f"{instance.custom_name or template.model} #{i+1}"
+                # Utiliser le nom personnalisé ou le modèle du template
+                machine_name = instance.custom_name or template.model
                 
                 machines_data.append({
                     "instance_id": instance.id,  # ID numérique unique
@@ -758,7 +759,7 @@ async def apply_optimal_ratios(site_id: int, db: Session = Depends(get_db)):
         db.commit()
         
         return {
-            "message": f"Ratios optimaux appliqués avec succès à {total_machines} machine(s) dans {instances_updated} instance(s)",
+            "message": f"Optimisation individuelle appliquée avec succès à {total_machines} machine(s) dans {instances_updated} instance(s)",
             "instances_updated": instances_updated,
             "total_machines": total_machines,
             "site_id": site_id,
@@ -1122,4 +1123,218 @@ async def reset_to_nominal_ratio(site_id: int, db: Session = Depends(get_db)):
         "instances_updated": instances_updated,
         "total_machines": total_machines,
         "site_id": site_id
+    }
+
+
+@router.post("/sites/{site_id}/global-optimization")
+async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
+    """
+    Optimisation globale du site : brute force grid search pour trouver la meilleure
+    combinaison de ratios qui maximise le profit total du site
+    """
+    # Vérifier que le site existe
+    site = db.query(models.MiningSite).filter(models.MiningSite.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site non trouvé")
+    
+    # Récupérer toutes les machines du site
+    machines = db.query(models.SiteMachineInstance).filter(
+        models.SiteMachineInstance.site_id == site_id
+    ).all()
+    
+    if not machines:
+        raise HTTPException(status_code=400, detail="Aucune machine trouvée dans ce site")
+    
+    # Récupérer les données de marché et d'électricité
+    from ..routes.efficiency import get_market_and_electricity_data
+    common_data = get_market_and_electricity_data(db)
+    bitcoin_price = common_data["bitcoin_price"]
+    fpps_rate = common_data["fpps_rate"]
+    electricity_tier1_rate = common_data["electricity_tier1_rate"]
+    electricity_tier2_rate = common_data["electricity_tier2_rate"]
+    electricity_tier1_limit = common_data["electricity_tier1_limit"]
+    
+    # Pour chaque machine, récupérer les ratios disponibles
+    machine_ratios = {}
+    machine_templates = {}
+    
+    for machine in machines:
+        template = db.query(models.MachineTemplate).filter(
+            models.MachineTemplate.id == machine.template_id,
+            models.MachineTemplate.is_active == True
+        ).first()
+        
+        if not template:
+            continue
+            
+        machine_templates[machine.id] = template
+        
+        # Récupérer les ratios disponibles pour cette machine
+        from ..routes.efficiency import get_available_ratios
+        available_ratios = get_available_ratios(template.id, db)
+        
+        if available_ratios and available_ratios.get("all_ratios"):
+            machine_ratios[machine.id] = available_ratios["all_ratios"]
+        else:
+            # Si pas de données d'efficacité, utiliser un ratio nominal
+            machine_ratios[machine.id] = [1.0]
+    
+    if not machine_ratios:
+        raise HTTPException(status_code=400, detail="Aucune donnée d'efficacité disponible pour les machines du site")
+    
+    # Générer toutes les combinaisons possibles de ratios
+    from itertools import product
+    
+    # Créer les listes de ratios pour chaque machine
+    ratio_lists = [machine_ratios[machine.id] for machine in machines]
+    
+    # Générer toutes les combinaisons
+    all_combinations = list(product(*ratio_lists))
+    
+    print(f"Test de {len(all_combinations)} combinaisons de ratios...")
+    
+    best_profit = float('-inf')
+    best_combination = None
+    best_results = None
+    all_results = []  # Stocker tous les résultats pour le CSV
+    
+    # Tester chaque combinaison
+    for combination in all_combinations:
+        try:
+            # Créer un mapping machine_id -> ratio
+            machine_ratio_map = {machines[i].id: combination[i] for i in range(len(machines))}
+            
+            # Calculer les performances de chaque machine avec ce ratio
+            machine_performances = []
+            total_hashrate = 0
+            total_power = 0
+            
+            for machine in machines:
+                template = machine_templates[machine.id]
+                ratio = machine_ratio_map[machine.id]
+                
+                # Obtenir les données d'efficacité pour ce ratio
+                from ..routes.efficiency import get_machine_efficiency_at_ratio
+                efficiency_response = await get_machine_efficiency_at_ratio(template.id, ratio, db)
+                
+                if efficiency_response and efficiency_response.get("effective_hashrate") and efficiency_response.get("power_consumption"):
+                    hashrate = float(efficiency_response["effective_hashrate"])
+                    power = int(efficiency_response["power_consumption"])
+                    
+                    machine_performances.append({
+                        "machine_id": machine.id,
+                        "template_id": template.id,
+                        "name": machine.custom_name or template.model,
+                        "ratio": ratio,
+                        "hashrate": hashrate,
+                        "power": power,
+                        "efficiency": hashrate / power if power > 0 else 0
+                    })
+                    
+                    total_hashrate += hashrate
+                    total_power += power
+            
+            if not machine_performances:
+                continue
+            
+            # Trier les machines par efficacité (TH/s/W) - les plus efficaces en premier
+            machine_performances.sort(key=lambda x: x["efficiency"], reverse=True)
+            
+            # Calculer les revenus totaux
+            daily_revenue = 0
+            if fpps_rate and bitcoin_price != -1:
+                fpps_sats_per_day = int(float(fpps_rate) * 100000000)
+                sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
+                hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                daily_revenue = hourly_revenue_cad * 24
+            
+            # Calculer les coûts d'électricité avec paliers
+            total_cost = 0
+            remaining_tier1_kwh = electricity_tier1_limit
+            
+            for machine_perf in machine_performances:
+                daily_power_kwh = (machine_perf["power"] * 24) / 1000
+                
+                if remaining_tier1_kwh > 0:
+                    # Utiliser le premier palier
+                    if daily_power_kwh <= remaining_tier1_kwh:
+                        machine_cost = daily_power_kwh * electricity_tier1_rate
+                        remaining_tier1_kwh -= daily_power_kwh
+                    else:
+                        # Partie premier palier
+                        tier1_cost = remaining_tier1_kwh * electricity_tier1_rate
+                        # Partie deuxième palier
+                        tier2_kwh = daily_power_kwh - remaining_tier1_kwh
+                        tier2_cost = tier2_kwh * electricity_tier2_rate
+                        machine_cost = tier1_cost + tier2_cost
+                        remaining_tier1_kwh = 0
+                else:
+                    # Utiliser seulement le deuxième palier
+                    machine_cost = daily_power_kwh * electricity_tier2_rate
+                
+                total_cost += machine_cost
+            
+            # Calculer le profit total
+            daily_profit = daily_revenue - total_cost
+            
+            # Stocker ce résultat pour le CSV
+            combination_result = {
+                "combination": combination,
+                "machine_ratio_map": machine_ratio_map,
+                "machine_performances": machine_performances,
+                "total_hashrate": total_hashrate,
+                "total_power": total_power,
+                "daily_revenue": daily_revenue,
+                "daily_cost": total_cost,
+                "daily_profit": daily_profit
+            }
+            all_results.append(combination_result)
+            
+            # Garder la meilleure combinaison
+            if daily_profit > best_profit:
+                best_profit = daily_profit
+                best_combination = machine_ratio_map
+                best_results = {
+                    "machine_performances": machine_performances,
+                    "total_hashrate": total_hashrate,
+                    "total_power": total_power,
+                    "daily_revenue": daily_revenue,
+                    "daily_cost": total_cost,
+                    "daily_profit": daily_profit
+                }
+                
+        except Exception as e:
+            print(f"Erreur lors du test de la combinaison {combination}: {str(e)}")
+            continue
+    
+    if best_combination is None:
+        raise HTTPException(status_code=400, detail="Impossible de calculer l'optimisation globale")
+    
+    # Appliquer la meilleure combinaison
+    instances_updated = 0
+    for machine in machines:
+        optimal_ratio = best_combination[machine.id]
+        
+        # Si le ratio optimal est 1.0, c'est considéré comme nominal
+        if optimal_ratio == 1.0:
+            machine.optimal_ratio = None
+            machine.ratio_type = 'nominal'
+        else:
+            machine.optimal_ratio = optimal_ratio
+            machine.ratio_type = 'optimal'
+        
+        instances_updated += 1
+    
+    db.commit()
+    
+    return {
+        "message": f"Optimisation globale appliquée avec succès à {len(machines)} machine(s)",
+        "site_id": site_id,
+        "site_name": site.name,
+        "combinations_tested": len(all_combinations),
+        "best_profit": best_profit,
+        "best_combination": best_combination,
+        "results": best_results,
+        "all_results": all_results,  # Tous les résultats pour le CSV
+        "instances_updated": instances_updated
     } 
