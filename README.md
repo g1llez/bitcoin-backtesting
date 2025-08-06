@@ -31,12 +31,19 @@ Advanced Bitcoin mining backtesting platform with multi-machine optimization and
 git clone git@github.com:g1llez/bitcoin-backtesting.git
 cd bitcoin-backtesting
 
+# Copy environment file and configure
+cp env.example .env
+# Edit .env with your secure passwords and tokens
+
 # Start the application
 docker compose up -d
 
 # Access the application
 open http://localhost:3001
 ```
+
+### Security Setup
+See [SECURITY.md](SECURITY.md) for detailed security guidelines and best practices.
 
 ## 📊 Current Version
 - **Version**: 2.3
