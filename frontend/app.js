@@ -11,7 +11,7 @@ let efficiencyData = [];
 const API_BASE = 'http://localhost:8000/api/v1';
 
 // Application Version
-const APP_VERSION = '2.3';
+const APP_VERSION = '2.4';
 
 // Version: 2.0 - Templates System
 // Initialize the application
@@ -209,9 +209,11 @@ function selectObject(objectType, objectId, objectData = null) {
             optimizationSection.style.display = 'none';
         }
         
-        // Afficher le bouton d'optimisation multi-machines
+        // Afficher les boutons d'optimisation multi-machines
         const multiOptimalBtn = document.getElementById('multiOptimalBtn');
+        const manualRatioBtn = document.getElementById('manualRatioBtn');
         if (multiOptimalBtn) multiOptimalBtn.style.display = 'block';
+        if (manualRatioBtn) manualRatioBtn.style.display = 'block';
     }
 }
 
@@ -358,17 +360,46 @@ function updateSiteSummaryDisplay(summary) {
     card.style.display = 'block';
     title.textContent = `Synthèse du Site: ${summary.site_name}`;
     
+    // Afficher les boutons d'action
+    const multiOptimalBtn = document.getElementById('multiOptimalBtn');
+    const manualRatioBtn = document.getElementById('manualRatioBtn');
+    const nominalRatioBtn = document.getElementById('nominalRatioBtn');
+    
+    if (multiOptimalBtn) multiOptimalBtn.style.display = 'inline-block';
+    if (manualRatioBtn) manualRatioBtn.style.display = 'inline-block';
+    if (nominalRatioBtn) nominalRatioBtn.style.display = 'inline-block';
+    
     // Vider le tableau
     tbody.innerHTML = '';
     tfoot.innerHTML = '';
     
     if (summary.machines.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center">Aucune machine dans ce site</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center">Aucune machine dans ce site</td></tr>';
         return;
     }
     
     // Remplir le tableau avec les machines
     summary.machines.forEach(machine => {
+        // Déterminer l'affichage du ratio actuel
+        let currentRatioDisplay = 'N/A';
+        let currentRatioClass = '';
+        
+        if (machine.current_ratio !== null && machine.current_ratio !== undefined) {
+            currentRatioDisplay = machine.current_ratio.toFixed(3);
+            
+            // Ajouter un indicateur visuel pour le type de ratio
+            if (machine.ratio_type === 'manual') {
+                currentRatioDisplay += ' <i class="fas fa-hand-paper text-warning" title="Ratio manuel"></i>';
+                currentRatioClass = 'text-warning';
+            } else if (machine.ratio_type === 'optimal') {
+                currentRatioDisplay += ' <i class="fas fa-cog text-info" title="Ratio optimal"></i>';
+                currentRatioClass = 'text-info';
+            } else {
+                currentRatioDisplay += ' <i class="fas fa-circle text-muted" title="Ratio nominal"></i>';
+                currentRatioClass = 'text-muted';
+            }
+        }
+        
         const row = `
             <tr>
                 <td>
@@ -378,7 +409,7 @@ function updateSiteSummaryDisplay(summary) {
                     </a>
                 </td>
                 <td>${machine.hashrate.toFixed(2)} TH/s</td>
-                <td>${machine.power}W</td>
+                <td>${Math.round(machine.power)}W</td>
                 <td>$${machine.daily_revenue.toFixed(2)}</td>
                 <td>$${machine.daily_cost.toFixed(2)}</td>
                 <td class="${machine.daily_profit >= 0 ? 'text-success' : 'text-danger'}">
@@ -386,6 +417,7 @@ function updateSiteSummaryDisplay(summary) {
                 </td>
                 <td>${machine.efficiency_th_per_watt.toFixed(3)} TH/s/W</td>
                 <td>${machine.optimal_ratio ? machine.optimal_ratio.toFixed(3) : 'N/A'}</td>
+                <td class="${currentRatioClass}">${currentRatioDisplay}</td>
             </tr>
         `;
         tbody.innerHTML += row;
@@ -396,7 +428,7 @@ function updateSiteSummaryDisplay(summary) {
         <tr class="table-info">
             <td><strong>TOTAL</strong></td>
             <td><strong>${summary.total_hashrate.toFixed(2)} TH/s</strong></td>
-            <td><strong>${summary.total_power}W</strong></td>
+            <td><strong>${Math.round(summary.total_power)}W</strong></td>
             <td><strong>$${summary.total_revenue.toFixed(2)}</strong></td>
             <td><strong>$${summary.total_cost.toFixed(2)}</strong></td>
             <td class="${summary.total_profit >= 0 ? 'text-success' : 'text-danger'}">
@@ -404,13 +436,17 @@ function updateSiteSummaryDisplay(summary) {
             </td>
             <td></td>
             <td></td>
+            <td></td>
         </tr>
         <tr class="table-light">
-            <td colspan="8" class="small text-muted">
+            <td colspan="9" class="small text-muted">
                 <i class="fas fa-info-circle"></i> 
                 Électricité: ${summary.electricity_tier1_rate}$/kWh (premier ${summary.electricity_tier1_limit}kWh), 
                 ${summary.electricity_tier2_rate}$/kWh (reste). 
-                Machines triées par efficacité (TH/s/W). Données basées sur les ratios optimaux.
+                Machines triées par efficacité (TH/s/W). 
+                <i class="fas fa-cog text-info"></i> Ratio optimal, 
+                <i class="fas fa-hand-paper text-warning"></i> Ratio manuel, 
+                <i class="fas fa-circle text-muted"></i> Ratio nominal.
             </td>
         </tr>
     `;
@@ -425,17 +461,30 @@ async function loadMultiOptimal() {
             return;
         }
         
-        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/multi-optimal`);
+        showNotification('Calcul et application des ratios optimaux...', 'info');
+        
+        // Utiliser le nouvel endpoint qui calcule ET applique les ratios optimaux
+        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/apply-optimal-ratios`, {
+            method: 'POST'
+        });
+        
         if (!response.ok) {
-            throw new Error('Failed to load multi-optimal data');
+            throw new Error('Failed to apply optimal ratios');
         }
         
-        const multiOptimal = await response.json();
-        updateMultiOptimalDisplay(multiOptimal);
+        const result = await response.json();
+        
+        // Mettre à jour l'affichage avec les résultats
+        updateMultiOptimalDisplay(result.result);
+        
+        // Recharger la synthèse du site pour refléter les changements
+        await loadSiteSummary(currentSiteId);
+        
+        showNotification(`Optimisation terminée! ${result.total_machines} machine(s) mises à jour.`, 'success');
         
     } catch (error) {
-        console.error('Error loading multi-optimal data:', error);
-        showNotification('Erreur lors du calcul multi-optimal', 'error');
+        console.error('Error applying optimal ratios:', error);
+        showNotification('Erreur lors de l\'optimisation automatique', 'error');
     }
 }
 
@@ -461,17 +510,37 @@ function updateMultiOptimalDisplay(multiOptimal) {
     tfoot.innerHTML = '';
     
     if (multiOptimal.machines.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="text-center">Aucune machine dans ce site</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center">Aucune machine dans ce site</td></tr>';
         return;
     }
     
     // Remplir le tableau avec les machines optimisées
     multiOptimal.machines.forEach(machine => {
+        // Déterminer l'affichage du ratio actuel
+        let currentRatioDisplay = 'N/A';
+        let currentRatioClass = '';
+        
+        if (machine.current_ratio !== null && machine.current_ratio !== undefined) {
+            currentRatioDisplay = machine.current_ratio.toFixed(3);
+            
+            // Ajouter un indicateur visuel pour le type de ratio
+            if (machine.ratio_type === 'manual') {
+                currentRatioDisplay += ' <i class="fas fa-hand-paper text-warning" title="Ratio manuel"></i>';
+                currentRatioClass = 'text-warning';
+            } else if (machine.ratio_type === 'optimal') {
+                currentRatioDisplay += ' <i class="fas fa-cog text-info" title="Ratio optimal"></i>';
+                currentRatioClass = 'text-info';
+            } else {
+                currentRatioDisplay += ' <i class="fas fa-circle text-muted" title="Ratio nominal"></i>';
+                currentRatioClass = 'text-muted';
+            }
+        }
+        
         const row = `
             <tr>
                 <td>${machine.name}</td>
                 <td>${machine.optimal_hashrate.toFixed(2)} TH/s</td>
-                <td>${machine.optimal_power}W</td>
+                <td>${Math.round(machine.optimal_power)}W</td>
                 <td>$${machine.daily_revenue.toFixed(2)}</td>
                 <td>$${machine.daily_cost.toFixed(2)}</td>
                 <td class="${machine.daily_profit >= 0 ? 'text-success' : 'text-danger'}">
@@ -479,6 +548,7 @@ function updateMultiOptimalDisplay(multiOptimal) {
                 </td>
                 <td>${machine.efficiency.toFixed(3)} TH/s/W</td>
                 <td>${machine.optimal_ratio.toFixed(3)}</td>
+                <td class="${currentRatioClass}">${currentRatioDisplay}</td>
             </tr>
         `;
         tbody.innerHTML += row;
@@ -489,7 +559,7 @@ function updateMultiOptimalDisplay(multiOptimal) {
         <tr class="table-info">
             <td><strong>TOTAL OPTIMISÉ</strong></td>
             <td><strong>${multiOptimal.total_hashrate.toFixed(2)} TH/s</strong></td>
-            <td><strong>${multiOptimal.total_power}W</strong></td>
+            <td><strong>${Math.round(multiOptimal.total_power)}W</strong></td>
             <td><strong>$${multiOptimal.total_revenue.toFixed(2)}</strong></td>
             <td><strong>$${multiOptimal.total_cost.toFixed(2)}</strong></td>
             <td class="${multiOptimal.total_profit >= 0 ? 'text-success' : 'text-danger'}">
@@ -497,9 +567,10 @@ function updateMultiOptimalDisplay(multiOptimal) {
             </td>
             <td></td>
             <td></td>
+            <td></td>
         </tr>
         <tr class="table-light">
-            <td colspan="8" class="small text-muted">
+            <td colspan="9" class="small text-muted">
                 <i class="fas fa-info-circle"></i> 
                 Optimisation séquentielle: Machines triées par efficacité (TH/s/W), 
                 ratios optimaux calculés individuellement, paliers d'électricité appliqués dans l'ordre d'efficacité.
@@ -776,7 +847,7 @@ function updateEfficiencyTable() {
         const row = `
             <tr>
                 <td>${item.effective_hashrate}</td>
-                <td>${item.power_consumption}W</td>
+                <td>${Math.round(item.power_consumption)}W</td>
                 <td>${ratio}%</td>
                 <td>
                     <button class="btn btn-sm btn-danger" onclick="deleteDataPoint(${item.id})">
@@ -1116,7 +1187,7 @@ function updateOptimizationResults(data = null, type = 'economic') {
                 document.querySelector('.optimal-hashrate').textContent = 
                     `${parseFloat(optimal.effective_hashrate).toFixed(2)} TH/s`;
                 document.querySelector('.optimal-power').textContent = 
-                    `${optimal.power_consumption}W`;
+                    `${Math.round(optimal.power_consumption)}W`;
                 
                 // Afficher/masquer les éléments selon le type
                 const efficiencyElement = document.querySelector('.result-item.efficiency');
@@ -2575,6 +2646,169 @@ function exportResults() {
 function showDetailedAnalysis() {
     showNotification('Analyse détaillée...', 'info');
     // This would show detailed analysis modal
+}
+
+
+
+async function loadAvailableRatios(siteId) {
+    try {
+        const response = await fetch(`${API_BASE}/sites/${siteId}/available-ratios`);
+        if (!response.ok) {
+            throw new Error('Failed to load available ratios');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Error loading available ratios:', error);
+        return null;
+    }
+}
+
+async function applyManualRatio() {
+    try {
+        if (!currentSiteId) {
+            showNotification('Aucun site sélectionné', 'error');
+            return;
+        }
+
+        // Charger les ratios disponibles
+        const availableRatios = await loadAvailableRatios(currentSiteId);
+        if (!availableRatios || !availableRatios.common_ratios || availableRatios.common_ratios.length === 0) {
+            showNotification('Impossible de charger les ratios disponibles', 'error');
+            return;
+        }
+
+        // Créer un modal avec slider
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.id = 'ratioSliderModal';
+        modal.innerHTML = `
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Sélectionner un ratio manuel</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Ratios disponibles pour toutes les machines du site <strong>${availableRatios.site_name}</strong>:</p>
+                        <div class="mb-3">
+                            <label for="ratioSlider" class="form-label">
+                                Ratio: <span id="ratioValue">1.0</span> (${Math.round(1.0 * 100)}%)
+                            </label>
+                            <input type="range" class="form-range" id="ratioSlider" 
+                                   min="${availableRatios.min_common_ratio}" 
+                                   max="${availableRatios.max_common_ratio}" 
+                                   step="0.05" value="1.0">
+                            <div class="d-flex justify-content-between">
+                                <small>${(availableRatios.min_common_ratio * 100).toFixed(0)}%</small>
+                                <small>${(availableRatios.max_common_ratio * 100).toFixed(0)}%</small>
+                            </div>
+                        </div>
+                        <div class="alert alert-info">
+                            <small>
+                                <strong>Plage de ratios disponibles:</strong> ${(availableRatios.min_common_ratio * 100).toFixed(0)}% à ${(availableRatios.max_common_ratio * 100).toFixed(0)}%
+                            </small>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="button" class="btn btn-primary" onclick="confirmManualRatio()">Appliquer</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+        
+        // Configurer le slider
+        const slider = modal.querySelector('#ratioSlider');
+        const ratioValue = modal.querySelector('#ratioValue');
+        
+        slider.addEventListener('input', function() {
+            const value = parseFloat(this.value);
+            ratioValue.textContent = value.toFixed(2);
+            ratioValue.nextSibling.textContent = ` (${Math.round(value * 100)}%)`;
+        });
+
+        // Afficher le modal
+        const modalInstance = new bootstrap.Modal(modal);
+        modalInstance.show();
+
+        // Nettoyer le modal après fermeture
+        modal.addEventListener('hidden.bs.modal', function() {
+            document.body.removeChild(modal);
+        });
+
+    } catch (error) {
+        console.error('Error showing ratio slider:', error);
+        showNotification('Erreur lors du chargement des ratios disponibles', 'error');
+    }
+}
+
+async function confirmManualRatio() {
+    try {
+        const slider = document.getElementById('ratioSlider');
+        const ratio = parseFloat(slider.value);
+        
+        showNotification('Application du ratio manuel...', 'info');
+        
+        // Fermer le modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('ratioSliderModal'));
+        modal.hide();
+
+        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/apply-manual-ratio`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                ratio: ratio,
+                optimization_type: 'economic'
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to apply manual ratio');
+        }
+
+        const result = await response.json();
+        await loadSiteSummary(currentSiteId);
+        showNotification(`Ratio ${(ratio * 100).toFixed(0)}% appliqué avec succès à ${result.total_machines} machine(s)!`, 'success');
+    } catch (error) {
+        console.error('Error applying manual ratio:', error);
+        showNotification(error.message, 'error');
+    }
+}
+
+// Reset to Nominal Ratio
+async function resetToNominalRatio() {
+    try {
+        if (!currentSiteId) {
+            showNotification('Aucun site sélectionné', 'error');
+            return;
+        }
+        
+        showNotification('Réinitialisation au ratio nominal...', 'info');
+        
+        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/reset-to-nominal`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to reset to nominal ratio');
+        }
+        
+        const result = await response.json();
+        
+        // Recharger la synthèse du site pour refléter les changements
+        await loadSiteSummary(currentSiteId);
+        
+        showNotification(`Ratio nominal (1.0) appliqué avec succès à ${result.total_machines} machine(s)!`, 'success');
+        
+    } catch (error) {
+        console.error('Error resetting to nominal ratio:', error);
+        showNotification('Erreur lors de la réinitialisation au ratio nominal', 'error');
+    }
 }
 
 // Initialize navigation handling

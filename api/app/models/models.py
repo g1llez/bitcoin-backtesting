@@ -138,6 +138,8 @@ class SiteMachineInstance(Base):
     quantity = Column(Integer, default=1)
     custom_name = Column(String(100))  # Nom personnalisé pour cette instance
     notes = Column(Text)  # Notes spécifiques à cette instance
+    optimal_ratio = Column(DECIMAL(5, 3))  # Ratio d'ajustement optimal appliqué à cette instance
+    ratio_type = Column(String(10), default='nominal')  # Type de ratio: manual, optimal, nominal
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
     
