@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ajout de données d'efficacité</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .form-group { margin: 10px 0; }
+        label { display: inline-block; width: 150px; }
+        input { padding: 5px; width: 100px; }
+        button { padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .result { margin-top: 20px; padding: 10px; background: #f8f9fa; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Ajout de données d'efficacité</h1>
+    
+    <div class="form-group">
+        <label>Machine ID:</label>
+        <input type="number" id="machineId" value="1" min="1">
+    </div>
+    
+    <div class="form-group">
+        <label>Hashrate (TH/s):</label>
+        <input type="number" id="hashrate" step="0.01" placeholder="ex: 95.0">
+    </div>
+    
+    <div class="form-group">
+        <label>Puissance (Watt):</label>
+        <input type="number" id="power" placeholder="ex: 2600">
+    </div>
+    
+    <button onclick="addData()">Ajouter les données</button>
+    
+    <div id="result" class="result" style="display: none;"></div>
+    
+    <h2>Données actuelles</h2>
+    <button onclick="loadData()">Charger les données</button>
+    <div id="dataList"></div>
+
+    <script>
+        async function addData() {
+            const machineId = document.getElementById('machineId').value;
+            const hashrate = document.getElementById('hashrate').value;
+            const power = document.getElementById('power').value;
+            
+            if (!machineId || !hashrate || !power) {
+                alert('Veuillez remplir tous les champs');
+                return;
+            }
+            
+            const data = {
+                machine_id: parseInt(machineId),
+                effective_hashrate: parseFloat(hashrate),
+                power_consumption: parseInt(power)
+            };
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/v1/efficiency/curves', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('result').innerHTML = 
+                        `<strong>Succès!</strong> Données ajoutées: ${hashrate} TH/s à ${power}W`;
+                    document.getElementById('result').style.display = 'block';
+                    loadData(); // Recharger les données
+                } else {
+                    document.getElementById('result').innerHTML = 
+                        `<strong>Erreur:</strong> ${result.detail}`;
+                    document.getElementById('result').style.display = 'block';
+                }
+            } catch (error) {
+                document.getElementById('result').innerHTML = 
+                    `<strong>Erreur:</strong> ${error.message}`;
+                document.getElementById('result').style.display = 'block';
+            }
+        }
+        
+        async function loadData() {
+            const machineId = document.getElementById('machineId').value;
+            
+            try {
+                const response = await fetch(`http://localhost:8000/api/v1/efficiency/machines/${machineId}`);
+                const data = await response.json();
+                
+                let html = '<table border="1" style="margin-top: 10px; width: 100%;">';
+                html += '<tr><th>ID</th><th>Hashrate (TH/s)</th><th>Puissance (W)</th><th>Ratio</th></tr>';
+                
+                data.forEach(item => {
+                    const ratio = ((item.power_consumption / 3250) * 100).toFixed(1);
+                    html += `<tr>
+                        <td>${item.id}</td>
+                        <td>${item.effective_hashrate}</td>
+                        <td>${item.power_consumption}</td>
+                        <td>${ratio}%</td>
+                    </tr>`;
+                });
+                
+                html += '</table>';
+                document.getElementById('dataList').innerHTML = html;
+            } catch (error) {
+                document.getElementById('dataList').innerHTML = 
+                    `<strong>Erreur:</strong> ${error.message}`;
+            }
+        }
+        
+        // Charger les données au démarrage
+        loadData();
+    </script>
+</body>
+</html> 

@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bitcoin Backtesting</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90' fill='%23f7931a'>₿</text></svg>">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="styles.css?v=2.1">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fab fa-bitcoin" style="color: #f7931a;"></i> <span style="color: #007bff;">Bitcoin Backtesting</span>
+            </a>
+            <div class="navbar-nav">
+                <a class="nav-link active" href="#machines">Machines</a>
+                <a class="nav-link" href="#backtest">Backtest</a>
+                <a class="nav-link" href="#results">Résultats</a>
+            </div>
+            <div class="style-selector">
+                <button class="btn btn-sm" onclick="changeStyle('dark')">🌙 Dark</button>
+                <button class="btn btn-sm" onclick="changeStyle('light')">☀️ Light</button>
+                <button class="btn btn-sm" onclick="changeStyle('colorful')">🌈 Colorful</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="openConfiguration()" title="Configuration générale">
+                    <i class="fas fa-cog"></i> Config
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container-fluid main-content">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-3 sidebar" id="mainSidebar">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-building"></i> Sites & Machines</h5>
+                        <div class="card-actions">
+                            <button class="btn btn-sm btn-outline-primary" onclick="openSiteModal()">
+                                <i class="fas fa-plus"></i> Site
+                            </button>
+                            <button class="btn btn-sm btn-outline-success" onclick="openTemplateModal()">
+                                <i class="fas fa-plus"></i> Template
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="sites-machines-tree" id="sitesMachinesTree">
+                            <!-- Sites and machines will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Backtest Sidebar -->
+            <div class="col-md-3 sidebar" id="backtestSidebar" style="display: none;">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-line"></i> Phases du Backtest</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="backtest-phases-tree">
+                            <div class="phase-item active" onclick="switchBacktestPhase(1)">
+                                <div class="phase-header">
+                                    <i class="fas fa-database"></i>
+                                    <span class="phase-name">Phase 1: Préparation</span>
+                                    <span class="phase-status" id="phase1Status">
+                                        <i class="fas fa-spinner fa-spin"></i>
+                                    </span>
+                                </div>
+                                <div class="phase-description">
+                                    Vérification des données historiques
+                                </div>
+                            </div>
+                            
+                            <div class="phase-item" onclick="switchBacktestPhase(2)">
+                                <div class="phase-header">
+                                    <i class="fas fa-cog"></i>
+                                    <span class="phase-name">Phase 2: Configuration</span>
+                                    <span class="phase-status" id="phase2Status">
+                                        <i class="fas fa-lock"></i>
+                                    </span>
+                                </div>
+                                <div class="phase-description">
+                                    Paramètres de test et ajustement
+                                </div>
+                            </div>
+                            
+                            <div class="phase-item" onclick="switchBacktestPhase(3)">
+                                <div class="phase-header">
+                                    <i class="fas fa-chart-bar"></i>
+                                    <span class="phase-name">Phase 3: Simulation</span>
+                                    <span class="phase-status" id="phase3Status">
+                                        <i class="fas fa-lock"></i>
+                                    </span>
+                                </div>
+                                <div class="phase-description">
+                                    Simulation jour par jour
+                                </div>
+                            </div>
+                            
+                            <div class="phase-item" onclick="switchBacktestPhase(4)">
+                                <div class="phase-header">
+                                    <i class="fas fa-chart-pie"></i>
+                                    <span class="phase-name">Phase 4: Résultats</span>
+                                    <span class="phase-status" id="phase4Status">
+                                        <i class="fas fa-lock"></i>
+                                    </span>
+                                </div>
+                                <div class="phase-description">
+                                    Analyse des résultats
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Main Content Area -->
+            <div class="col-md-9 main-content">
+                <!-- Backtest Section -->
+                <div id="backtestSection" style="display: none;">
+                    <!-- Configuration fixe - Paramètres visibles en tout temps -->                       
+                    <div class="row">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-cogs"></i> Configuration du Backtest</h5>
+                                    <div class="card-actions">
+                                        <button class="btn btn-sm btn-outline-primary" onclick="saveConfigurationFromForm()">
+                                            <i class="fas fa-save"></i> Sauvegarder
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-secondary" onclick="refreshConfiguration()">
+                                            <i class="fas fa-sync"></i> Actualiser
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div class="row">
+                                        <div class="col-md-6">
+                                            <h6><i class="fas fa-cog"></i> Paramètres de Test</h6>
+                                            <form id="fixedBacktestConfigForm">
+                                                <div class="mb-3">
+                                                    <label class="form-label">Date de début</label>
+                                                    <input type="date" class="form-control" id="fixedBacktestStartDate" value="2024-01-01" required pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD">
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Date de fin</label>
+                                                    <input type="date" class="form-control" id="fixedBacktestEndDate" value="2024-12-31" required pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD">
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Intervalle de paiement (mois)</label>
+                                                    <input type="number" class="form-control" id="fixedPaymentInterval" value="3" min="1" max="12" required>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Période ROI visée (mois)</label>
+                                                    <input type="number" class="form-control" id="fixedRoiPeriod" value="36" min="12" max="60" required>
+                                                </div>
+                                            </form>
+                                        </div>
+                                        <div class="col-md-6">
+                                            <h6><i class="fas fa-sliders-h"></i> Paramètres d'Ajustement</h6>
+                                            <form id="fixedAdjustmentConfigForm">
+                                                <div class="mb-3">
+                                                    <label class="form-label">Taux d'agressivité de départ</label>
+                                                    <input type="number" class="form-control" id="fixedInitialAggressiveness" value="1.2" step="0.1" min="0.5" max="2.0" required>
+                                                    <small class="text-muted">Ratio d'agressivité initial (1.0 = nominal)</small>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Poids SD 4 ans</label>
+                                                    <input type="number" class="form-control" id="fixedSd4YearWeight" value="0.6" step="0.1" min="0" max="1" required>
+                                                    <small class="text-muted">Poids pour l'écart-type 4 ans (0.6 = 60%)</small>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label class="form-label">Poids SD 1 an</label>
+                                                    <input type="number" class="form-control" id="fixedSd1YearWeight" value="0.4" step="0.1" min="0" max="1" required>
+                                                    <small class="text-muted">Poids pour l'écart-type 1 an (0.4 = 40%)</small>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Contenu principal du backtest -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-chart-line"></i> <span id="backtestPhaseTitle">Phase 1: Préparation</span></h5>
+                                    <div class="card-actions">
+                                        <button class="btn btn-primary btn-sm" onclick="startBacktest()" id="backtestActionBtn">
+                                            <i class="fas fa-play"></i> Démarrer Backtest
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <!-- Phase Content -->
+                                    <div id="backtestPhaseContent">
+                                        <!-- Phase 1: Préparation -->
+                                        <div id="phase1" class="phase-content active">
+                                            <div class="row mt-3">
+                                                <div class="col-md-8">
+                                                    <h6><i class="fas fa-database"></i> Vérification des Données</h6>
+                                                    <div class="data-status-grid">
+                                                        <div class="data-status-item">
+                                                            <span class="status-label">Prix Bitcoin historique:</span>
+                                                            <span class="status-value" id="bitcoinDataStatus">
+                                                                <i class="fas fa-spinner fa-spin"></i> Vérification...
+                                                            </span>
+                                                        </div>
+                                                        <div class="data-status-item">
+                                                            <span class="status-label">Données FPPS historique:</span>
+                                                            <span class="status-value" id="fppsDataStatus">
+                                                                <i class="fas fa-spinner fa-spin"></i> Vérification...
+                                                            </span>
+                                                        </div>
+                                                        <div class="data-status-item">
+                                                            <span class="status-label">Sites configurés:</span>
+                                                            <span class="status-value" id="sitesDataStatus">
+                                                                <i class="fas fa-spinner fa-spin"></i> Vérification...
+                                                            </span>
+                                                        </div>
+                                                        <div class="data-status-item">
+                                                            <span class="status-label">Machines configurées:</span>
+                                                            <span class="status-value" id="machinesDataStatus">
+                                                                <i class="fas fa-spinner fa-spin"></i> Vérification...
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="mt-3">
+                                                        <button class="btn btn-primary btn-sm" onclick="checkDataAvailability()">
+                                                            <i class="fas fa-sync"></i> Vérifier les Données
+                                                        </button>
+                                                        <button class="btn btn-warning btn-sm" onclick="importMissingData()">
+                                                            <i class="fas fa-download"></i> Importer Données Manquantes
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <h6><i class="fas fa-info-circle"></i> Guide du Backtest</h6>
+                                                    <div class="alert alert-info">
+                                                        <small>
+                                                            <strong>🎯 Objectif :</strong> Tester des stratégies d'ajustement dynamique de l'agressivité du mining.<br><br>
+                                                            <strong>📊 Phase 1 :</strong> Vérification des données historiques nécessaires.<br>
+                                                            <strong>⚙️ Phase 2 :</strong> Configuration des paramètres de test.<br>
+                                                            <strong>🔄 Phase 3 :</strong> Simulation jour par jour avec ajustements.<br>
+                                                            <strong>📈 Phase 4 :</strong> Analyse des résultats et performance.
+                                                        </small>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Phase 2: Configuration -->
+                                        <div id="phase2" class="phase-content">
+                                            <div class="row mt-3">
+                                                <div class="col-md-6">
+                                                    <h6><i class="fas fa-cog"></i> Paramètres de Test</h6>
+                                                    <form id="backtestConfigForm">
+                                                        <div class="mb-3">
+                                                            <label class="form-label">Date de début</label>
+                                                            <input type="date" class="form-control" id="backtestStartDate" required pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD">
+                                                        </div>
+                                                        <div class="mb-3">
+                                                            <label class="form-label">Date de fin</label>
+                                                            <input type="date" class="form-control" id="backtestEndDate" required pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD">
+                                                        </div>
+                                                        <div class="mb-3">
+                                                            <label class="form-label">Intervalle de paiement (mois)</label>
+                                                            <input type="number" class="form-control" id="paymentInterval" value="3" min="1" max="12" required>
+                                                        </div>
+                                                        <div class="mb-3">
+                                                            <label class="form-label">Période ROI visée (mois)</label>
+                                                            <input type="number" class="form-control" id="roiPeriod" value="36" min="12" max="60" required>
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <h6><i class="fas fa-sliders-h"></i> Paramètres d'Ajustement</h6>
+                                                    <form id="adjustmentConfigForm">
+                                                        <div class="mb-3">
+                                                            <label class="form-label">Taux d'agressivité de départ</label>
+                                                            <input type="number" class="form-control" id="initialAggressiveness" value="1.2" step="0.1" min="0.5" max="2.0" required>
+                                                            <small class="text-muted">Ratio d'agressivité initial (1.0 = nominal)</small>
+                                                        </div>
+                                                        <div class="mb-3">
+                                                            <label class="form-label">Poids SD 4 ans</label>
+                                                            <input type="number" class="form-control" id="sd4YearWeight" value="0.6" step="0.1" min="0" max="1" required>
+                                                            <small class="text-muted">Poids pour l'écart-type 4 ans (0.6 = 60%)</small>
+                                                        </div>
+                                                        <div class="mb-3">
+                                                            <label class="form-label">Poids SD 1 an</label>
+                                                            <input type="number" class="form-control" id="sd1YearWeight" value="0.4" step="0.1" min="0" max="1" required>
+                                                            <small class="text-muted">Poids pour l'écart-type 1 an (0.4 = 40%)</small>
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                            </div>
+                                            <div class="row mt-3">
+                                                <div class="col-12">
+                                                    <h6><i class="fas fa-building"></i> Sélection des Sites</h6>
+                                                    <div id="sitesSelection">
+                                                        <!-- Sites will be loaded here -->
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Phase 3: Simulation -->
+                                        <div id="phase3" class="phase-content">
+                                            <div class="row mt-3">
+                                                <div class="col-md-6">
+                                                    <h6><i class="fas fa-chart-bar"></i> Progression de la Simulation</h6>
+                                                    <div class="progress mb-3">
+                                                        <div class="progress-bar" id="simulationProgress" role="progressbar" style="width: 0%">0%</div>
+                                                    </div>
+                                                    <div class="simulation-status">
+                                                        <div class="status-item">
+                                                            <span class="status-label">Jour actuel:</span>
+                                                            <span class="status-value" id="currentDay">--</span>
+                                                        </div>
+                                                        <div class="status-item">
+                                                            <span class="status-label">Profit cumulé:</span>
+                                                            <span class="status-value" id="cumulativeProfit">$0.00</span>
+                                                        </div>
+                                                        <div class="status-item">
+                                                            <span class="status-label">Agressivité actuelle:</span>
+                                                            <span class="status-value" id="currentAggressiveness">1.0</span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="mt-3">
+                                                        <button class="btn btn-primary btn-sm" onclick="startSimulation()" id="startSimulationBtn">
+                                                            <i class="fas fa-play"></i> Démarrer Simulation
+                                                        </button>
+                                                        <button class="btn btn-warning btn-sm" onclick="pauseSimulation()" id="pauseSimulationBtn" style="display: none;">
+                                                            <i class="fas fa-pause"></i> Pause
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <h6><i class="fas fa-chart-line"></i> Graphique en Temps Réel</h6>
+                                                    <canvas id="simulationChart" width="400" height="200"></canvas>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Phase 4: Résultats -->
+                                        <div id="phase4" class="phase-content">
+                                            <div class="row mt-3">
+                                                <div class="col-md-6">
+                                                    <h6><i class="fas fa-chart-pie"></i> Résultats Finaux</h6>
+                                                    <div class="results-summary">
+                                                        <div class="result-item">
+                                                            <span class="label">Profit total:</span>
+                                                            <span class="value" id="totalProfit">$0.00</span>
+                                                        </div>
+                                                        <div class="result-item">
+                                                            <span class="label">Ratio de performance:</span>
+                                                            <span class="value" id="performanceRatio">1.00</span>
+                                                        </div>
+                                                        <div class="result-item">
+                                                            <span class="label">ROI effectif:</span>
+                                                            <span class="value" id="effectiveROI">0%</span>
+                                                        </div>
+                                                        <div class="result-item">
+                                                            <span class="label">Cycles de paiement:</span>
+                                                            <span class="value" id="paymentCycles">0</span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="mt-3">
+                                                        <button class="btn btn-success btn-sm" onclick="exportResults()">
+                                                            <i class="fas fa-download"></i> Exporter Résultats
+                                                        </button>
+                                                        <button class="btn btn-info btn-sm" onclick="showDetailedAnalysis()">
+                                                            <i class="fas fa-chart-bar"></i> Analyse Détaillée
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <h6><i class="fas fa-chart-line"></i> Graphique de Performance</h6>
+                                                    <canvas id="resultsChart" width="400" height="200"></canvas>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Market Data Bar -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card market-data-card">
+                            <div class="card-body">
+                                <div class="market-data-grid">
+                                    <div class="market-data-item">
+                                        <div class="market-data-label">
+                                            <i class="fab fa-bitcoin"></i> Prix Bitcoin
+                                        </div>
+                                        <div class="market-data-value" id="bitcoinPrice">
+                                            <span class="loading">Chargement...</span>
+                                        </div>
+                                    </div>
+                                    <div class="market-data-item">
+                                        <div class="market-data-label">
+                                            <i class="fas fa-chart-line"></i> FPPS
+                                        </div>
+                                        <div class="market-data-value" id="fppsData">
+                                            <span class="loading">Chargement...</span>
+                                        </div>
+                                    </div>
+                                    <div class="market-data-item">
+                                        <div class="market-data-label">
+                                            <i class="fas fa-clock"></i> Dernière mise à jour
+                                        </div>
+                                        <div class="market-data-value" id="lastUpdate">
+                                            <span class="loading">--</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Selected Object Info -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card" id="selectedObjectCard" style="display: none;">
+                            <div class="card-header">
+                                <h5><i class="fas fa-info-circle"></i> <span id="selectedObjectTitle">Objet Sélectionné</span></h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="selectedObjectInfo">
+                                    <!-- Les informations de l'objet sélectionné seront affichées ici -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Site Summary Table -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card" id="siteSummaryCard" style="display: none;">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5><i class="fas fa-table"></i> <span id="siteSummaryTitle">Synthèse du Site</span></h5>
+                                <button class="btn btn-primary btn-sm" id="multiOptimalBtn" onclick="loadMultiOptimal()" style="display: none;">
+                                    <i class="fas fa-cogs"></i> Optimisation Multi-Machines
+                                </button>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-striped" id="siteSummaryTable">
+                                        <thead>
+                                            <tr>
+                                                <th>Machine</th>
+                                                <th>Hashrate</th>
+                                                <th>Puissance</th>
+                                                <th>Revenu/jour</th>
+                                                <th>Coût/jour</th>
+                                                <th>Profit/jour</th>
+                                                <th>Efficacité</th>
+                                                <th>Ratio Optimal</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="siteSummaryTableBody">
+                                            <!-- Les données seront chargées ici -->
+                                        </tbody>
+                                        <tfoot id="siteSummaryTableFooter">
+                                            <!-- Totaux -->
+                                        </tfoot>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Charts Row (Top) -->
+                <div class="row mb-4" id="chartsSection" style="display: none;">
+                    <!-- Ratio Analysis Chart -->
+                    <div class="col-lg-6" id="ratioAnalysisChartSection">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="fas fa-chart-bar"></i> Profit vs Ratio</h5>
+                            </div>
+                            <div class="card-body">
+                                <canvas id="ratioAnalysisChart" width="400" height="250"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Efficiency Chart -->
+                    <div class="col-lg-6" id="efficiencyChartSection">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="fas fa-chart-line"></i> Courbe d'Efficacité</h5>
+                                <div class="card-actions">
+                                    <button class="btn btn-primary btn-sm" onclick="addDataPoint()">
+                                        <i class="fas fa-plus"></i> Ajouter Donnée
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <canvas id="efficiencyChart" width="400" height="250"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Optimization Results (Bottom) -->
+                <div class="row" id="optimizationSection" style="display: none;">
+                    <div class="col-lg-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="fas fa-calculator"></i> Optimisation <span id="optimizationStatus" class="badge bg-success" style="display: none;">Auto</span></h5>
+                                <div class="card-actions">
+                                    <button class="btn btn-sm btn-outline-primary" onclick="calculateOptimal('economic')">
+                                        <i class="fas fa-dollar-sign"></i> Économique
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-success" onclick="calculateOptimal('technical')">
+                                        <i class="fas fa-cog"></i> Technique
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-warning" onclick="calculateOptimal('aggressive')">
+                                        <i class="fas fa-rocket"></i> Agressif
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div class="optimization-result">
+                                    <div class="result-item">
+                                        <span class="label">Type d'optimisation:</span>
+                                        <span class="value optimization-type">Économique</span>
+                                    </div>
+                                    <div class="result-item">
+                                        <span class="label">Ratio Optimal:</span>
+                                        <span class="value optimal-ratio">0.85</span>
+                                    </div>
+                                    <div class="result-item">
+                                        <span class="label">Hashrate:</span>
+                                        <span class="value optimal-hashrate">108.5 TH/s</span>
+                                    </div>
+                                    <div class="result-item">
+                                        <span class="label">Puissance:</span>
+                                        <span class="value optimal-power">2762W</span>
+                                    </div>
+                                    <div class="result-item efficiency" style="display: none;">
+                                        <span class="label">Efficacité:</span>
+                                        <span class="value optimal-efficiency">--</span>
+                                    </div>
+                                    <div class="result-item sats">
+                                        <span class="label">Sats/heure:</span>
+                                        <span class="value optimal-sats">--</span>
+                                    </div>
+                                    <div class="result-item revenue">
+                                        <span class="label">Revenu Quotidien:</span>
+                                        <span class="value optimal-revenue">$4.25</span>
+                                    </div>
+                                    <div class="result-item cost">
+                                        <span class="label">Coût Hydro Quotidien:</span>
+                                        <span class="value optimal-cost">$2.15</span>
+                                    </div>
+                                    <div class="result-item profit">
+                                        <span class="label">Profit Quotidien:</span>
+                                        <span class="value optimal-profit">$2.10</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="fas fa-list"></i> Données d'Efficacité</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="data-table">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>TH/s</th>
+                                                <th>Watt</th>
+                                                <th>Ratio</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="efficiencyData">
+                                            <!-- Data will be loaded here -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Configuration Modal -->
+    <div class="modal fade" id="configModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Configuration</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-key"></i> Token Braiins Pool</h6>
+                            <p class="text-muted small">Token d'authentification pour récupérer les données FPPS</p>
+                            <div class="mb-3">
+                                <label class="form-label">Token</label>
+                                <input type="password" class="form-control" id="braiinsToken" placeholder="Votre token Braiins Pool">
+                            </div>
+                            <button class="btn btn-primary btn-sm" onclick="testBraiinsToken()">
+                                <i class="fas fa-test-tube"></i> Tester la connexion
+                            </button>
+                        </div>
+                        <div class="col-md-6">
+                            <h6><i class="fas fa-cog"></i> Paramètres de calcul</h6>
+                            <p class="text-muted small">Paramètres pour le calcul des profits</p>
+                            <div class="mb-3">
+                                <label class="form-label">1er palier - Taux d'électricité ($/kWh)</label>
+                                <input type="number" class="form-control" id="electricityTier1Rate" value="0.0730" step="0.001">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">1er palier - Limite (kWh)</label>
+                                <input type="number" class="form-control" id="electricityTier1Limit" value="40" step="1">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">2ème palier - Taux d'électricité ($/kWh)</label>
+                                <input type="number" class="form-control" id="electricityTier2Rate" value="0.0890" step="0.001">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Devise préférée</label>
+                                <select class="form-control" id="preferredCurrency">
+                                    <option value="CAD">CAD</option>
+                                    <option value="USD">USD</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="row">
+                        <div class="col-12">
+                            <h6><i class="fas fa-database"></i> Gestion du Cache</h6>
+                            <p class="text-muted small">Gérer le cache des données de marché (Bitcoin et FPPS)</p>
+                            <div class="mb-3">
+                                <button class="btn btn-warning btn-sm" onclick="clearMarketCache()">
+                                    <i class="fas fa-trash"></i> Vider le cache
+                                </button>
+                                <button class="btn btn-info btn-sm" onclick="getCacheStatus()">
+                                    <i class="fas fa-info"></i> Statut du cache
+                                </button>
+                                <span id="cacheStatus" class="ms-2"></span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <hr>
+                    
+                    <div class="row">
+                        <div class="col-12">
+                            <h6><i class="fas fa-info-circle"></i> Informations</h6>
+                            <div class="alert alert-info">
+                                <small>
+                                    <strong>Token Braiins Pool :</strong> Obtenez votre token depuis votre compte Braiins Pool.<br>
+                                    <strong>Paliers d'électricité :</strong> Premier 40kWh à un taux, puis taux supérieur (Québec).<br>
+                                    <strong>Devise :</strong> Devise d'affichage pour les prix Bitcoin.<br>
+                                    <strong>Cache :</strong> Les données de marché sont mises en cache pendant 1 minute pour éviter les limites d'API.
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="saveConfiguration()">Sauvegarder</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Data Modal -->
+    <div class="modal fade" id="addDataModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Ajouter Donnée d'Efficacité</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addDataForm">
+                        <div class="mb-3">
+                            <label class="form-label">Hashrate (TH/s)</label>
+                            <input type="number" class="form-control" id="hashrate" step="0.01" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Puissance (Watt)</label>
+                            <input type="number" class="form-control" id="power" required>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="saveDataPoint()">Ajouter</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Site Modal -->
+    <div class="modal fade" id="siteModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Site de Mining</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="siteForm">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Nom du Site</label>
+                                    <input type="text" class="form-control" id="siteName" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Adresse</label>
+                                    <textarea class="form-control" id="siteAddress" rows="2"></textarea>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Token Braiins (optionnel)</label>
+                                    <input type="password" class="form-control" id="siteBraiinsToken">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">1er palier - Taux ($/kWh)</label>
+                                    <input type="number" class="form-control" id="siteTier1Rate" value="0.0730" step="0.001">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">1er palier - Limite (kWh)</label>
+                                    <input type="number" class="form-control" id="siteTier1Limit" value="40" step="1">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">2ème palier - Taux ($/kWh)</label>
+                                    <input type="number" class="form-control" id="siteTier2Rate" value="0.0890" step="0.001">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Devise préférée</label>
+                                    <select class="form-control" id="siteCurrency">
+                                        <option value="CAD">CAD</option>
+                                        <option value="USD">USD</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="saveSite()">Sauvegarder</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Template Modal -->
+    <div class="modal fade" id="templateModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Template de Machine</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="templateForm">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Modèle</label>
+                                    <input type="text" class="form-control" id="templateModel" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Fabricant</label>
+                                    <input type="text" class="form-control" id="templateManufacturer" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Hashrate nominal (TH/s)</label>
+                                    <input type="number" class="form-control" id="templateHashrate" step="0.01" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Puissance nominale (W)</label>
+                                    <input type="number" class="form-control" id="templatePower" required>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Efficacité de base (J/TH)</label>
+                                    <input type="number" class="form-control" id="templateEfficiency" step="0.01" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Prix (CAD)</label>
+                                    <input type="number" class="form-control" id="templatePrice" step="0.01">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Année de sortie</label>
+                                    <input type="number" class="form-control" id="templateYear" min="2010" max="2030">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Notes</label>
+                                    <textarea class="form-control" id="templateNotes" rows="3"></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="saveTemplate()">Sauvegarder</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js?v=2.2"></script>
+    
+    <!-- Version indicator -->
+    <div id="versionIndicator" style="position: fixed; bottom: 5px; left: 5px; font-size: 10px; color: #000; z-index: 1000; background: rgba(255,255,255,0.95); padding: 2px 5px; border-radius: 3px; font-weight: bold;">
+        Chargement...
+    </div>
+</body>
+</html> 

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug Interface</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .debug-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        .data { background: #f5f5f5; padding: 10px; border-radius: 3px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Debug de l'Interface Bitcoin Backtesting</h1>
+    
+    <div class="debug-section">
+        <h3>Test API - Templates System</h3>
+        <div id="api-debug"></div>
+    </div>
+    
+    <div class="debug-section">
+        <h3>Interface Principale</h3>
+        <p><a href="http://localhost:3001" target="_blank">Ouvrir l'interface principale</a></p>
+        <p><strong>Important :</strong> Appuyez sur Ctrl+F5 pour forcer le rechargement du cache</p>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000/api/v1';
+        const debugDiv = document.getElementById('api-debug');
+        
+        async function debugAPI() {
+            const tests = [
+                { name: 'Templates de machines', url: '/machine-templates' },
+                { name: 'Sites', url: '/sites' },
+                { name: 'Instances du site 1', url: '/sites/1/machine-instances' },
+                { name: 'Statistiques du site 1', url: '/sites/1/statistics' }
+            ];
+            
+            for (const test of tests) {
+                try {
+                    const response = await fetch(`${API_BASE}${test.url}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        debugDiv.innerHTML += `
+                            <div class="success">✅ ${test.name}: OK</div>
+                            <div class="data">${JSON.stringify(data, null, 2)}</div>
+                        `;
+                    } else {
+                        debugDiv.innerHTML += `
+                            <div class="error">❌ ${test.name}: Erreur ${response.status}</div>
+                        `;
+                    }
+                } catch (error) {
+                    debugDiv.innerHTML += `
+                        <div class="error">❌ ${test.name}: ${error.message}</div>
+                    `;
+                }
+            }
+        }
+        
+        debugAPI();
+    </script>
+</body>
+</html> 

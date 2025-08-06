@@ -1,0 +1,61 @@
+services:
+  # Base de données PostgreSQL dédiée au projet Bitcoin
+  postgres-bitcoin:
+    image: postgres:15
+    container_name: bitcoin-backtesting-db
+    environment:
+      - POSTGRES_PASSWORD=bitcoin123
+      - POSTGRES_USER=bitcoin_user
+      - POSTGRES_DB=bitcoin_backtesting
+    ports:
+      - "5434:5432"  # Port différent pour éviter les conflits
+    volumes:
+      - bitcoin-postgres-data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d
+    restart: unless-stopped
+    networks:
+      - bitcoin-network
+
+  # API Backend
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: bitcoin-backtesting-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://bitcoin_user:bitcoin123@postgres-bitcoin:5432/bitcoin_backtesting
+      - POSTGRES_HOST=postgres-bitcoin
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=bitcoin_user
+      - POSTGRES_PASSWORD=bitcoin123
+      - POSTGRES_DB=bitcoin_backtesting
+    volumes:
+      - ./api:/app
+    depends_on:
+      - postgres-bitcoin
+    restart: unless-stopped
+    networks:
+      - bitcoin-network
+
+  # Interface web
+  frontend:
+    image: nginx:alpine
+    container_name: bitcoin-backtesting-frontend
+    ports:
+      - "3001:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - bitcoin-network
+
+volumes:
+  bitcoin-postgres-data:
+
+networks:
+  bitcoin-network:
+    driver: bridge 
