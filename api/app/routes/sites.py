@@ -633,7 +633,7 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                 machine_name = f"{instance.custom_name or template.model} #{i+1}"
                 
                 machines_data.append({
-                    "instance_id": instance.id,
+                    "instance_id": instance.id,  # ID numérique unique
                     "template_id": template.id,
                     "name": machine_name,
                     "template_model": template.model,
@@ -744,8 +744,14 @@ async def apply_optimal_ratios(site_id: int, db: Session = Depends(get_db)):
             
             if machine_data and machine_data["optimal_ratio"] is not None:
                 # Appliquer le ratio optimal calculé
-                instance.optimal_ratio = machine_data["optimal_ratio"]
-                instance.ratio_type = 'optimal'
+                optimal_ratio = machine_data["optimal_ratio"]
+                # Si le ratio optimal est 1.0, c'est considéré comme nominal
+                if optimal_ratio == 1.0:
+                    instance.optimal_ratio = None
+                    instance.ratio_type = 'nominal'
+                else:
+                    instance.optimal_ratio = optimal_ratio
+                    instance.ratio_type = 'optimal'
                 instances_updated += 1
                 total_machines += instance.quantity
         
@@ -828,8 +834,13 @@ async def apply_manual_ratio(site_id: int, ratio_data: dict, db: Session = Depen
     
     for machine in machines:
         # Appliquer le ratio manuel
-        machine.optimal_ratio = ratio
-        machine.ratio_type = 'manual'
+        # Si le ratio est 1.0, c'est considéré comme nominal
+        if ratio == 1.0:
+            machine.optimal_ratio = None
+            machine.ratio_type = 'nominal'
+        else:
+            machine.optimal_ratio = ratio
+            machine.ratio_type = 'manual'
         instances_updated += 1
         total_machines += machine.quantity
     
@@ -911,13 +922,174 @@ async def get_site_available_ratios(site_id: int, db: Session = Depends(get_db))
     # Trier les ratios communs
     common_ratios_list = sorted(list(common_ratios)) if common_ratios else []
     
+    # Récupérer le ratio courant du site
+    current_ratio = 1.0  # Valeur par défaut
+    current_ratio_type = 'nominal'
+    
+    if machines:
+        # Prendre le ratio de la première machine qui a un ratio défini
+        for machine in machines:
+            if machine.optimal_ratio is not None:
+                current_ratio = float(machine.optimal_ratio)
+                current_ratio_type = machine.ratio_type or 'manual'
+                break
+    
     return {
         "site_id": site_id,
         "site_name": site.name,
         "machines": available_ratios,
         "common_ratios": common_ratios_list,
         "min_common_ratio": min(common_ratios_list) if common_ratios_list else None,
-        "max_common_ratio": max(common_ratios_list) if common_ratios_list else None
+        "max_common_ratio": max(common_ratios_list) if common_ratios_list else None,
+        "current_ratio": current_ratio,
+        "current_ratio_type": current_ratio_type
+    }
+
+
+@router.get("/sites/{site_id}/machines/{instance_id}/available-ratios")
+async def get_machine_available_ratios(site_id: int, instance_id: int, db: Session = Depends(get_db)):
+    """Récupère les ratios disponibles pour une machine spécifique"""
+    
+    # Vérifier que le site existe
+    site = db.query(models.MiningSite).filter(models.MiningSite.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site non trouvé")
+    
+    # Vérifier que l'instance de machine existe
+    machine_instance = db.query(models.SiteMachineInstance).filter(
+        models.SiteMachineInstance.id == instance_id,
+        models.SiteMachineInstance.site_id == site_id
+    ).first()
+    
+    if not machine_instance:
+        raise HTTPException(status_code=404, detail="Machine non trouvée")
+    
+    # Récupérer le template de la machine
+    template = db.query(models.MachineTemplate).filter(
+        models.MachineTemplate.id == machine_instance.template_id,
+        models.MachineTemplate.is_active == True
+    ).first()
+    
+    if not template:
+        raise HTTPException(status_code=404, detail="Template de machine non trouvé")
+    
+    # Tester différents ratios pour trouver les limites
+    test_ratios = [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5]
+    valid_ratios = []
+    
+    try:
+        from ..routes.efficiency import get_machine_efficiency_at_ratio
+        
+        for ratio in test_ratios:
+            try:
+                efficiency_response = await get_machine_efficiency_at_ratio(template.id, ratio, db)
+                if efficiency_response and efficiency_response.get("effective_hashrate") and efficiency_response.get("power_consumption"):
+                    valid_ratios.append(ratio)
+            except:
+                continue
+        
+        if not valid_ratios:
+            raise HTTPException(status_code=500, detail="Impossible de récupérer les ratios disponibles")
+        
+        # Récupérer le ratio courant
+        current_ratio = 1.0
+        current_ratio_type = 'nominal'
+        
+        if machine_instance.optimal_ratio is not None:
+            current_ratio = float(machine_instance.optimal_ratio)
+            current_ratio_type = machine_instance.ratio_type or 'manual'
+        
+        return {
+            "site_id": site_id,
+            "instance_id": instance_id,
+            "machine_model": template.model,
+            "valid_ratios": valid_ratios,
+            "min_ratio": min(valid_ratios),
+            "max_ratio": max(valid_ratios),
+            "current_ratio": current_ratio,
+            "current_ratio_type": current_ratio_type
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erreur lors de la récupération des ratios: {str(e)}"
+        )
+
+
+@router.post("/sites/{site_id}/machines/{instance_id}/apply-ratio")
+async def apply_ratio_to_machine(site_id: int, instance_id: int, ratio_data: dict, db: Session = Depends(get_db)):
+    """Applique un ratio spécifique à une machine particulière"""
+    
+    # Vérifier que le site existe
+    site = db.query(models.MiningSite).filter(models.MiningSite.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site non trouvé")
+    
+    # Vérifier que l'instance de machine existe
+    machine_instance = db.query(models.SiteMachineInstance).filter(
+        models.SiteMachineInstance.id == instance_id,
+        models.SiteMachineInstance.site_id == site_id
+    ).first()
+    
+    if not machine_instance:
+        raise HTTPException(status_code=404, detail="Machine non trouvée")
+    
+    # Récupérer les données du ratio
+    ratio = ratio_data.get("ratio")
+    optimization_type = ratio_data.get("optimization_type", "economic")
+    
+    if ratio is None:
+        raise HTTPException(status_code=400, detail="Ratio requis")
+    
+    # Validation basique
+    if ratio < 0.5 or ratio > 1.5:
+        raise HTTPException(status_code=400, detail="Ratio doit être entre 0.5 et 1.5")
+    
+    # Vérifier si le ratio est valide pour cette machine
+    template = db.query(models.MachineTemplate).filter(
+        models.MachineTemplate.id == machine_instance.template_id,
+        models.MachineTemplate.is_active == True
+    ).first()
+    
+    if template:
+        try:
+            from ..routes.efficiency import get_machine_efficiency_at_ratio
+            efficiency_response = await get_machine_efficiency_at_ratio(template.id, ratio, db)
+            
+            if not efficiency_response or not efficiency_response.get("effective_hashrate") or not efficiency_response.get("power_consumption"):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Ratio {ratio} non valide pour la machine {template.model}. "
+                           f"Utilisez l'API /efficiency/machines/{template.id}/ratio-bounds pour voir les ratios disponibles."
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Erreur lors de la validation du ratio {ratio}: {str(e)}"
+            )
+    
+    # Appliquer le ratio à cette machine spécifique
+    # Si le ratio est 1.0, c'est considéré comme nominal
+    if ratio == 1.0:
+        machine_instance.optimal_ratio = None
+        machine_instance.ratio_type = 'nominal'
+    else:
+        machine_instance.optimal_ratio = ratio
+        machine_instance.ratio_type = 'manual'
+    
+    db.commit()
+    
+    return {
+        "message": f"Ratio {ratio} appliqué avec succès à la machine {template.model if template else 'Unknown'}",
+        "instance_id": instance_id,
+        "site_id": site_id,
+        "ratio": ratio,
+        "optimization_type": optimization_type
     }
 
 

@@ -387,17 +387,39 @@ function updateSiteSummaryDisplay(summary) {
         if (machine.current_ratio !== null && machine.current_ratio !== undefined) {
             currentRatioDisplay = machine.current_ratio.toFixed(3);
             
-            // Ajouter un indicateur visuel pour le type de ratio
-            if (machine.ratio_type === 'manual') {
-                currentRatioDisplay += ' <i class="fas fa-hand-paper text-warning" title="Ratio manuel"></i>';
-                currentRatioClass = 'text-warning';
-            } else if (machine.ratio_type === 'optimal') {
-                currentRatioDisplay += ' <i class="fas fa-cog text-info" title="Ratio optimal"></i>';
-                currentRatioClass = 'text-info';
-            } else {
-                currentRatioDisplay += ' <i class="fas fa-circle text-muted" title="Ratio nominal"></i>';
+            // Logique d'affichage des icônes multiples
+            let icons = [];
+            
+            // Toujours l'icône nominal si ratio = 1.0
+            if (machine.current_ratio === 1.0) {
+                icons.push('<i class="fas fa-circle text-muted" title="Ratio nominal"></i>');
                 currentRatioClass = 'text-muted';
             }
+            
+            // Si ratio actuel = ratio optimal calculé → Ajouter icône optimal
+            if (machine.optimal_ratio && Math.abs(machine.current_ratio - machine.optimal_ratio) < 0.01) {
+                icons.push('<i class="fas fa-cog text-info" title="Ratio optimal"></i>');
+                if (machine.current_ratio !== 1.0) {
+                    currentRatioClass = 'text-info';
+                }
+            }
+            
+            // Si ratio_type = 'optimal' ET ratio différent → Ajouter icône d'alerte
+            if (machine.ratio_type === 'optimal' && 
+                machine.optimal_ratio && 
+                Math.abs(machine.current_ratio - machine.optimal_ratio) > 0.01) {
+                icons.push('<i class="fas fa-exclamation-triangle text-warning" title="Ratio optimal a changé"></i>');
+                currentRatioClass = 'text-warning';
+            }
+            
+            // Si ratio_type = 'manual' et pas d'autres icônes
+            if (machine.ratio_type === 'manual' && icons.length === 0) {
+                icons.push('<i class="fas fa-hand-paper text-warning" title="Ratio manuel"></i>');
+                currentRatioClass = 'text-warning';
+            }
+            
+            // Ajouter les icônes au display
+            currentRatioDisplay += ' ' + icons.join(' ');
         }
         
         const row = `
@@ -417,7 +439,14 @@ function updateSiteSummaryDisplay(summary) {
                 </td>
                 <td>${machine.efficiency_th_per_watt.toFixed(3)} TH/s/W</td>
                 <td>${machine.optimal_ratio ? machine.optimal_ratio.toFixed(3) : 'N/A'}</td>
-                <td class="${currentRatioClass}">${currentRatioDisplay}</td>
+                <td class="${currentRatioClass}">
+                    ${currentRatioDisplay}
+                    <button class="btn btn-sm btn-outline-primary ms-2" 
+                            onclick="editMachineRatio(${machine.instance_id})" 
+                            title="Modifier le ratio de cette machine">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                </td>
             </tr>
         `;
         tbody.innerHTML += row;
@@ -446,7 +475,8 @@ function updateSiteSummaryDisplay(summary) {
                 Machines triées par efficacité (TH/s/W). 
                 <i class="fas fa-cog text-info"></i> Ratio optimal, 
                 <i class="fas fa-hand-paper text-warning"></i> Ratio manuel, 
-                <i class="fas fa-circle text-muted"></i> Ratio nominal.
+                <i class="fas fa-circle text-muted"></i> Ratio nominal,
+                <i class="fas fa-exclamation-triangle text-warning"></i> Ratio optimal changé.
             </td>
         </tr>
     `;
@@ -523,17 +553,39 @@ function updateMultiOptimalDisplay(multiOptimal) {
         if (machine.current_ratio !== null && machine.current_ratio !== undefined) {
             currentRatioDisplay = machine.current_ratio.toFixed(3);
             
-            // Ajouter un indicateur visuel pour le type de ratio
-            if (machine.ratio_type === 'manual') {
-                currentRatioDisplay += ' <i class="fas fa-hand-paper text-warning" title="Ratio manuel"></i>';
-                currentRatioClass = 'text-warning';
-            } else if (machine.ratio_type === 'optimal') {
-                currentRatioDisplay += ' <i class="fas fa-cog text-info" title="Ratio optimal"></i>';
-                currentRatioClass = 'text-info';
-            } else {
-                currentRatioDisplay += ' <i class="fas fa-circle text-muted" title="Ratio nominal"></i>';
+            // Logique d'affichage des icônes multiples
+            let icons = [];
+            
+            // Toujours l'icône nominal si ratio = 1.0
+            if (machine.current_ratio === 1.0) {
+                icons.push('<i class="fas fa-circle text-muted" title="Ratio nominal"></i>');
                 currentRatioClass = 'text-muted';
             }
+            
+            // Si ratio actuel = ratio optimal calculé → Ajouter icône optimal
+            if (machine.optimal_ratio && Math.abs(machine.current_ratio - machine.optimal_ratio) < 0.01) {
+                icons.push('<i class="fas fa-cog text-info" title="Ratio optimal"></i>');
+                if (machine.current_ratio !== 1.0) {
+                    currentRatioClass = 'text-info';
+                }
+            }
+            
+            // Si ratio_type = 'optimal' ET ratio différent → Ajouter icône d'alerte
+            if (machine.ratio_type === 'optimal' && 
+                machine.optimal_ratio && 
+                Math.abs(machine.current_ratio - machine.optimal_ratio) > 0.01) {
+                icons.push('<i class="fas fa-exclamation-triangle text-warning" title="Ratio optimal a changé"></i>');
+                currentRatioClass = 'text-warning';
+            }
+            
+            // Si ratio_type = 'manual' et pas d'autres icônes
+            if (machine.ratio_type === 'manual' && icons.length === 0) {
+                icons.push('<i class="fas fa-hand-paper text-warning" title="Ratio manuel"></i>');
+                currentRatioClass = 'text-warning';
+            }
+            
+            // Ajouter les icônes au display
+            currentRatioDisplay += ' ' + icons.join(' ');
         }
         
         const row = `
@@ -2690,14 +2742,20 @@ async function applyManualRatio() {
                     </div>
                     <div class="modal-body">
                         <p>Ratios disponibles pour toutes les machines du site <strong>${availableRatios.site_name}</strong>:</p>
+                        <div class="alert alert-secondary mb-3">
+                            <small>
+                                <strong>Ratio actuel:</strong> ${(availableRatios.current_ratio * 100).toFixed(0)}% 
+                                (${availableRatios.current_ratio_type === 'manual' ? 'Manuel' : availableRatios.current_ratio_type === 'optimal' ? 'Optimal' : 'Nominal'})
+                            </small>
+                        </div>
                         <div class="mb-3">
                             <label for="ratioSlider" class="form-label">
-                                Ratio: <span id="ratioValue">1.0</span> (${Math.round(1.0 * 100)}%)
+                                Ratio: <span id="ratioValue">${availableRatios.current_ratio.toFixed(2)}</span> (${Math.round(availableRatios.current_ratio * 100)}%)
                             </label>
                             <input type="range" class="form-range" id="ratioSlider" 
                                    min="${availableRatios.min_common_ratio}" 
                                    max="${availableRatios.max_common_ratio}" 
-                                   step="0.05" value="1.0">
+                                   step="0.05" value="${availableRatios.current_ratio}">
                             <div class="d-flex justify-content-between">
                                 <small>${(availableRatios.min_common_ratio * 100).toFixed(0)}%</small>
                                 <small>${(availableRatios.max_common_ratio * 100).toFixed(0)}%</small>
@@ -2741,6 +2799,129 @@ async function applyManualRatio() {
     } catch (error) {
         console.error('Error showing ratio slider:', error);
         showNotification('Erreur lors du chargement des ratios disponibles', 'error');
+    }
+}
+
+async function editMachineRatio(instanceId) {
+    try {
+        if (!currentSiteId) {
+            showNotification('Aucun site sélectionné', 'error');
+            return;
+        }
+
+        // Charger les ratios disponibles pour cette machine spécifique
+        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/machines/${instanceId}/available-ratios`);
+        if (!response.ok) {
+            throw new Error('Failed to load available ratios for machine');
+        }
+        const availableRatios = await response.json();
+
+        // Créer un modal avec slider pour cette machine
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.id = 'machineRatioSliderModal';
+        modal.innerHTML = `
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Modifier le ratio de la machine</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p>Ratios disponibles pour <strong>${availableRatios.machine_model}</strong>:</p>
+                        <div class="alert alert-secondary mb-3">
+                            <small>
+                                <strong>Ratio actuel:</strong> ${(availableRatios.current_ratio * 100).toFixed(0)}% 
+                                (${availableRatios.current_ratio_type === 'manual' ? 'Manuel' : availableRatios.current_ratio_type === 'optimal' ? 'Optimal' : 'Nominal'})
+                            </small>
+                        </div>
+                        <div class="mb-3">
+                            <label for="machineRatioSlider" class="form-label">
+                                Ratio: <span id="machineRatioValue">${availableRatios.current_ratio.toFixed(2)}</span> (${Math.round(availableRatios.current_ratio * 100)}%)
+                            </label>
+                            <input type="range" class="form-range" id="machineRatioSlider" 
+                                   min="${availableRatios.min_ratio}" 
+                                   max="${availableRatios.max_ratio}" 
+                                   step="0.05" value="${availableRatios.current_ratio}">
+                            <div class="d-flex justify-content-between">
+                                <small>${(availableRatios.min_ratio * 100).toFixed(0)}%</small>
+                                <small>${(availableRatios.max_ratio * 100).toFixed(0)}%</small>
+                            </div>
+                        </div>
+                        <div class="alert alert-info">
+                            <small>
+                                <strong>Plage de ratios disponibles:</strong> ${(availableRatios.min_ratio * 100).toFixed(0)}% à ${(availableRatios.max_ratio * 100).toFixed(0)}%
+                            </small>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="button" class="btn btn-primary" onclick="confirmMachineRatio(${instanceId})">Appliquer</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+        
+        // Configurer le slider
+        const slider = modal.querySelector('#machineRatioSlider');
+        const ratioValue = modal.querySelector('#machineRatioValue');
+        
+        slider.addEventListener('input', function() {
+            const value = parseFloat(this.value);
+            ratioValue.textContent = value.toFixed(2);
+            ratioValue.nextSibling.textContent = ` (${Math.round(value * 100)}%)`;
+        });
+
+        // Afficher le modal
+        const modalInstance = new bootstrap.Modal(modal);
+        modalInstance.show();
+
+        // Nettoyer le modal après fermeture
+        modal.addEventListener('hidden.bs.modal', function() {
+            document.body.removeChild(modal);
+        });
+
+    } catch (error) {
+        console.error('Error showing machine ratio slider:', error);
+        showNotification('Erreur lors du chargement des ratios disponibles pour cette machine', 'error');
+    }
+}
+
+async function confirmMachineRatio(instanceId) {
+    try {
+        const slider = document.getElementById('machineRatioSlider');
+        const ratio = parseFloat(slider.value);
+        
+        showNotification('Application du ratio à la machine...', 'info');
+        
+        // Fermer le modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('machineRatioSliderModal'));
+        modal.hide();
+
+        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/machines/${instanceId}/apply-ratio`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                ratio: ratio,
+                optimization_type: 'economic'
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to apply ratio to machine');
+        }
+
+        const result = await response.json();
+        await loadSiteSummary(currentSiteId);
+        showNotification(`Ratio ${(ratio * 100).toFixed(0)}% appliqué avec succès à la machine!`, 'success');
+    } catch (error) {
+        console.error('Error applying machine ratio:', error);
+        showNotification(error.message, 'error');
     }
 }
 
