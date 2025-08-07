@@ -10,6 +10,50 @@ from ..routes.efficiency import find_optimal_adjustment_ratio
 
 router = APIRouter()
 
+def get_site_electricity_data_with_fallback(site, db: Session):
+    """
+    Récupère les données d'électricité d'un site avec fallback vers la configuration globale
+    """
+    # Essayer d'abord les données du site
+    tier1_rate = site.electricity_tier1_rate
+    tier2_rate = site.electricity_tier2_rate
+    tier1_limit = site.electricity_tier1_limit
+    
+    # Récupérer la configuration globale pour fallback
+    tier1_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier1_rate").first()
+    tier2_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier2_rate").first()
+    tier1_limit_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier1_limit").first()
+    
+    # Traiter tier1_rate
+    if tier1_rate is not None:
+        tier1_rate = float(tier1_rate)
+    elif tier1_config and tier1_config.value and float(tier1_config.value) > 0:
+        tier1_rate = float(tier1_config.value)
+    else:
+        tier1_rate = 0.0
+    
+    # Traiter tier2_rate
+    if tier2_rate is not None:
+        tier2_rate = float(tier2_rate)
+    elif tier2_config and tier2_config.value and float(tier2_config.value) > 0:
+        tier2_rate = float(tier2_config.value)
+    else:
+        tier2_rate = 0.0
+    
+    # Traiter tier1_limit
+    if tier1_limit is not None:
+        tier1_limit = int(tier1_limit)
+    elif tier1_limit_config and tier1_limit_config.value and int(tier1_limit_config.value) > 0:
+        tier1_limit = int(tier1_limit_config.value)
+    else:
+        tier1_limit = 0
+    
+    return {
+        "tier1_rate": tier1_rate,
+        "tier2_rate": tier2_rate,
+        "tier1_limit": tier1_limit
+    }
+
 @router.get("/sites", response_model=List[MiningSite])
 async def get_sites(db: Session = Depends(get_db)):
     """Récupérer tous les sites de minage"""
@@ -23,6 +67,42 @@ async def get_site(site_id: int, db: Session = Depends(get_db)):
     if not site:
         raise HTTPException(status_code=404, detail="Site non trouvé")
     return site
+
+@router.get("/sites/{site_id}/with-fallback")
+async def get_site_with_fallback(site_id: int, db: Session = Depends(get_db)):
+    """Récupérer un site avec les données d'électricité incluant le fallback vers la config globale"""
+    site = db.query(models.MiningSite).filter(models.MiningSite.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site non trouvé")
+    
+    # Récupérer les données d'électricité avec fallback
+    electricity_data = get_site_electricity_data_with_fallback(site, db)
+    
+    # Créer la réponse avec les données de fallback
+    site_data = {
+        "id": site.id,
+        "name": site.name,
+        "address": site.address,
+        "braiins_token": site.braiins_token,
+        "preferred_currency": site.preferred_currency,
+        "created_at": site.created_at,
+        "updated_at": site.updated_at,
+        # Données d'électricité avec indication de fallback
+        "electricity_tier1_rate": {
+            "value": electricity_data["tier1_rate"],
+            "is_fallback": site.electricity_tier1_rate is None
+        },
+        "electricity_tier2_rate": {
+            "value": electricity_data["tier2_rate"],
+            "is_fallback": site.electricity_tier2_rate is None
+        },
+        "electricity_tier1_limit": {
+            "value": electricity_data["tier1_limit"],
+            "is_fallback": site.electricity_tier1_limit is None
+        }
+    }
+    
+    return site_data
 
 @router.post("/sites", response_model=MiningSite)
 async def create_site(site: MiningSiteCreate, db: Session = Depends(get_db)):
@@ -273,14 +353,11 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
         bitcoin_price = market_data["bitcoin_price"] or -1
         fpps_rate = market_data["fpps_rate"]
         
-        # Récupérer les taux d'électricité
-        tier1_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier1_rate").first()
-        tier2_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier2_rate").first()
-        tier1_limit_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier1_limit").first()
-        
-        electricity_tier1_rate = float(tier1_config.value) if tier1_config else 0
-        electricity_tier2_rate = float(tier2_config.value) if tier2_config else 0
-        electricity_tier1_limit = int(tier1_limit_config.value) if tier1_limit_config else 0
+        # Récupérer les données d'électricité avec fallback vers la config globale
+        electricity_data = get_site_electricity_data_with_fallback(site, db)
+        electricity_tier1_rate = electricity_data["tier1_rate"]
+        electricity_tier2_rate = electricity_data["tier2_rate"]
+        electricity_tier1_limit = electricity_data["tier1_limit"]
         
         # Étape 1: Préparer les machines avec leurs données nominales
         machines_data = []
@@ -436,6 +513,11 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
             "electricity_tier1_rate": electricity_tier1_rate,
             "electricity_tier2_rate": electricity_tier2_rate,
             "electricity_tier1_limit": electricity_tier1_limit,
+            "electricity_fallback_info": {
+                "tier1_rate_is_fallback": site.electricity_tier1_rate is None,
+                "tier2_rate_is_fallback": site.electricity_tier2_rate is None,
+                "tier1_limit_is_fallback": site.electricity_tier1_limit is None
+            },
             "machines": machines_data,
             "total_hashrate": total_hashrate,
             "total_power": total_power,
@@ -538,14 +620,11 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
         bitcoin_price = market_data["bitcoin_price"] or -1
         fpps_rate = market_data["fpps_rate"]
         
-        # Récupérer les taux d'électricité
-        tier1_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier1_rate").first()
-        tier2_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier2_rate").first()
-        tier1_limit_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier1_limit").first()
-        
-        electricity_tier1_rate = float(tier1_config.value) if tier1_config else 0
-        electricity_tier2_rate = float(tier2_config.value) if tier2_config else 0
-        electricity_tier1_limit = int(tier1_limit_config.value) if tier1_limit_config else 0
+        # Récupérer les données d'électricité avec fallback vers la config globale
+        electricity_data = get_site_electricity_data_with_fallback(site, db)
+        electricity_tier1_rate = electricity_data["tier1_rate"]
+        electricity_tier2_rate = electricity_data["tier2_rate"]
+        electricity_tier1_limit = electricity_data["tier1_limit"]
         
         # Calculer les données pour chaque machine
         machines_data = []
@@ -695,13 +774,18 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
             "electricity_tier1_rate": electricity_tier1_rate,
             "electricity_tier2_rate": electricity_tier2_rate,
             "electricity_tier1_limit": electricity_tier1_limit,
+            "electricity_fallback_info": {
+                "tier1_rate_is_fallback": site.electricity_tier1_rate is None,
+                "tier2_rate_is_fallback": site.electricity_tier2_rate is None,
+                "tier1_limit_is_fallback": site.electricity_tier1_limit is None
+            },
             "machines": machines_data,
             "total_hashrate": total_hashrate,
             "total_power": total_power,
             "total_revenue": total_revenue,
             "total_cost": total_cost,
             "total_profit": total_profit
-                } 
+        } 
     
     except HTTPException:
         raise
@@ -1150,14 +1234,18 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
     if not machines:
         raise HTTPException(status_code=400, detail="Aucune machine trouvée dans ce site")
     
-    # Récupérer les données de marché et d'électricité
-    from ..routes.efficiency import get_market_and_electricity_data
-    common_data = get_market_and_electricity_data(db)
-    bitcoin_price = common_data["bitcoin_price"]
-    fpps_rate = common_data["fpps_rate"]
-    electricity_tier1_rate = common_data["electricity_tier1_rate"]
-    electricity_tier2_rate = common_data["electricity_tier2_rate"]
-    electricity_tier1_limit = common_data["electricity_tier1_limit"]
+    # Récupérer les données de marché et d'électricité du site
+    from ..services.market_cache import MarketCacheService
+    cache_service = MarketCacheService(db)
+    market_data = cache_service.get_market_data()
+    bitcoin_price = market_data["bitcoin_price"] or -1
+    fpps_rate = market_data["fpps_rate"]
+    
+    # Récupérer les données d'électricité avec fallback vers la config globale
+    electricity_data = get_site_electricity_data_with_fallback(site, db)
+    electricity_tier1_rate = electricity_data["tier1_rate"]
+    electricity_tier2_rate = electricity_data["tier2_rate"]
+    electricity_tier1_limit = electricity_data["tier1_limit"]
     
     # Pour chaque machine, récupérer les ratios disponibles
     machine_ratios = {}
@@ -1202,8 +1290,8 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
     
     additional_combinations = []
     
-    # Pour chaque nombre de machines à activer (de 1 à toutes les machines)
-    for num_active in range(1, len(machines)):
+    # Pour chaque nombre de machines à activer (de 0 à toutes les machines)
+    for num_active in range(0, len(machines) + 1):
         # Pour chaque combinaison de machines actives
         for active_machines_indices in combinations(range(len(machines)), num_active):
             # Créer une combinaison où les machines inactives ont ratio = 0
@@ -1402,12 +1490,18 @@ async def fine_site_optimization(
     if not machines:
         raise HTTPException(status_code=400, detail="Aucune machine trouvée dans ce site")
     
-    # Récupérer les données communes
-    from ..routes.efficiency import get_market_and_electricity_data
-    common_data = get_market_and_electricity_data(db)
-    electricity_tier1_rate = common_data["electricity_tier1_rate"]
-    electricity_tier2_rate = common_data["electricity_tier2_rate"]
-    electricity_tier1_limit = common_data["electricity_tier1_limit"]
+    # Récupérer les données de marché et d'électricité du site
+    from ..services.market_cache import MarketCacheService
+    cache_service = MarketCacheService(db)
+    market_data = cache_service.get_market_data()
+    bitcoin_price = market_data["bitcoin_price"] or -1
+    fpps_rate = market_data["fpps_rate"]
+    
+    # Récupérer les données d'électricité avec fallback vers la config globale
+    electricity_data = get_site_electricity_data_with_fallback(site, db)
+    electricity_tier1_rate = electricity_data["tier1_rate"]
+    electricity_tier2_rate = electricity_data["tier2_rate"]
+    electricity_tier1_limit = electricity_data["tier1_limit"]
     
     # Paramètres d'optimisation fine (maintenant reçus directement)
     fine_range = fine_range
@@ -1418,7 +1512,7 @@ async def fine_site_optimization(
         print(f"Optimisation fine basée sur les résultats globaux existants...")
         return await perform_fine_optimization_from_global_results(
             site, machines, global_results, fine_range, fine_step, 
-            common_data, electricity_tier1_rate, electricity_tier2_rate, electricity_tier1_limit, db
+            bitcoin_price, fpps_rate, electricity_tier1_rate, electricity_tier2_rate, electricity_tier1_limit, db
         )
     
     # Sinon, faire l'optimisation complète (approche actuelle)
@@ -1469,8 +1563,8 @@ async def fine_site_optimization(
     
     additional_combinations = []
     
-    # Pour chaque nombre de machines à activer (de 1 à toutes les machines)
-    for num_active in range(1, len(machines)):
+    # Pour chaque nombre de machines à activer (de 0 à toutes les machines)
+    for num_active in range(0, len(machines) + 1):
         # Pour chaque combinaison de machines actives
         for active_machines_indices in combinations(range(len(machines)), num_active):
             # Créer une combinaison où les machines inactives ont ratio = 0
@@ -1749,7 +1843,7 @@ async def fine_site_optimization(
 
 async def perform_fine_optimization_from_global_results(
     site, machines, global_results, fine_range, fine_step, 
-    common_data, electricity_tier1_rate, electricity_tier2_rate, electricity_tier1_limit, db
+    bitcoin_price, fpps_rate, electricity_tier1_rate, electricity_tier2_rate, electricity_tier1_limit, db
 ):
     """
     Optimisation fine basée sur les résultats de l'optimisation globale

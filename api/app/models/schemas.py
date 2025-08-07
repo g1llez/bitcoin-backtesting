@@ -197,7 +197,7 @@ class MiningSiteBase(BaseModel):
     address: Optional[str] = None
     electricity_tier1_rate: Optional[Decimal] = Field(None, ge=0)
     electricity_tier2_rate: Optional[Decimal] = Field(None, ge=0)
-    electricity_tier1_limit: int = Field(..., gt=0)
+    electricity_tier1_limit: Optional[int] = Field(None, gt=0)
     braiins_token: Optional[str] = None
     preferred_currency: str = "CAD"
 

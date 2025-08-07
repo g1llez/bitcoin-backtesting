@@ -1507,3 +1507,32 @@ body {
     background: rgba(255, 255, 255, 0.95) !important;
     font-weight: bold;
 }
+
+/* Fallback Indicators */
+.form-control-fallback {
+    border-color: var(--warning-color) !important;
+    background-color: rgba(255, 193, 7, 0.1) !important;
+}
+
+.form-control-site {
+    border-color: var(--success-color) !important;
+    background-color: rgba(40, 167, 69, 0.1) !important;
+}
+
+.fallback-indicator {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.875rem;
+}
+
+.fallback-indicator i {
+    margin-right: 0.25rem;
+}
+
+[data-theme="dark"] .form-control-fallback {
+    background-color: rgba(255, 193, 7, 0.2) !important;
+}
+
+[data-theme="dark"] .form-control-site {
+    background-color: rgba(40, 167, 69, 0.2) !important;
+}

@@ -6,12 +6,54 @@ let currentObjectId = null;
 let currentObjectData = null;
 let efficiencyChart = null;
 let efficiencyData = [];
+// Track sites being or already deleted to avoid stray fetches
+const deletedSiteIds = new Set();
 
 // API Base URL
 const API_BASE = 'http://localhost:8000/api/v1';
 
 // Application Version
-const APP_VERSION = '4.5';
+const APP_VERSION = '7.0';
+
+// Fonction unifiée pour formater les données d'électricité avec icônes
+function formatElectricityData(electricityData, fallbackInfo = null, globalDefaults = null) {
+    const parseNumber = (value) => {
+        if (value === null || value === undefined) return null;
+        const num = parseFloat(value);
+        return Number.isNaN(num) ? null : num;
+    };
+
+    // Valeurs locales (site ou multiOptimal)
+    const localTier1Rate = parseNumber(electricityData.electricity_tier1_rate);
+    const localTier2Rate = parseNumber(electricityData.electricity_tier2_rate);
+    const localTier1Limit = parseNumber(electricityData.electricity_tier1_limit);
+
+    // Valeurs globales (facultatives)
+    const globalTier1Rate = globalDefaults ? parseNumber(globalDefaults.electricity_tier1_rate) : null;
+    const globalTier2Rate = globalDefaults ? parseNumber(globalDefaults.electricity_tier2_rate) : null;
+    const globalTier1Limit = globalDefaults ? parseNumber(globalDefaults.electricity_tier1_limit) : null;
+
+    // Choisir la valeur effective (locale si présente, sinon globale)
+    const effectiveTier1Rate = localTier1Rate !== null ? localTier1Rate : globalTier1Rate;
+    const effectiveTier2Rate = localTier2Rate !== null ? localTier2Rate : globalTier2Rate;
+    const effectiveTier1Limit = localTier1Limit !== null ? localTier1Limit : globalTier1Limit;
+
+    // Déterminer si la valeur affichée provient du site (locale)
+    const tier1IsLocal = fallbackInfo ? !fallbackInfo.tier1_rate_is_fallback : (localTier1Rate !== null);
+    const tier2IsLocal = fallbackInfo ? !fallbackInfo.tier2_rate_is_fallback : (localTier2Rate !== null);
+    const limitIsLocal = fallbackInfo ? !fallbackInfo.tier1_limit_is_fallback : (localTier1Limit !== null);
+
+    // Formater avec icônes (icône uniquement si locale)
+    const tier1Icon = tier1IsLocal ? ' <i class="fas fa-info-circle text-warning" title="Configuration forcée localement"></i>' : '';
+    const tier2Icon = tier2IsLocal ? ' <i class="fas fa-info-circle text-warning" title="Configuration forcée localement"></i>' : '';
+    const limitIcon = limitIsLocal ? ' <i class="fas fa-info-circle text-warning" title="Configuration forcée localement"></i>' : '';
+
+    return {
+        tier1: effectiveTier1Rate !== null ? `${effectiveTier1Rate.toFixed(5)} $/kWh${tier1Icon}` : 'N/A',
+        tier2: effectiveTier2Rate !== null ? `${effectiveTier2Rate.toFixed(5)} $/kWh${tier2Icon}` : 'N/A',
+        limit: effectiveTier1Limit !== null ? `${effectiveTier1Limit} kW${limitIcon}` : 'N/A'
+    };
+}
 
 // Version: 2.0 - Templates System
 // Initialize the application
@@ -113,7 +155,7 @@ function updateChartTheme() {
 }
 
 // Object Selection
-function selectObject(objectType, objectId, objectData = null) {
+async function selectObject(objectType, objectId, objectData = null) {
     currentObjectType = objectType;
     currentObjectId = objectId;
     currentObjectData = objectData;
@@ -148,7 +190,7 @@ function selectObject(objectType, objectId, objectData = null) {
     }
     
     // Update selected object info
-    updateSelectedObjectInfo(objectType, objectId, objectData);
+    await updateSelectedObjectInfo(objectType, objectId, objectData);
     
     // Load appropriate data based on object type
     if (objectType === 'machine' || objectType === 'template') {
@@ -187,16 +229,16 @@ function selectObject(objectType, objectId, objectData = null) {
     } else if (objectType === 'site') {
         currentSiteId = objectId;
         
+        // Mettre à jour les informations du site avec les données reçues
+        if (objectData) {
+            updateSelectedObjectInfo(objectType, objectId, objectData);
+        }
+        
         // Charger les statistiques du site (machines, hashrate)
         loadSiteStatistics(objectId);
         
         // Charger la synthèse du site
         loadSiteSummary(objectId);
-        
-        // Mettre à jour les informations du site avec les données fraîches
-        if (objectData) {
-            updateSelectedObjectInfo(objectType, objectId, objectData);
-        }
         
         // Masquer les sections de graphiques et d'optimisation pour les sites
         const chartsSection = document.getElementById('chartsSection');
@@ -246,7 +288,7 @@ async function selectMachineFromSummary(templateId, machineName) {
 }
 
 // Update Selected Object Info
-function updateSelectedObjectInfo(objectType, objectId, objectData) {
+async function updateSelectedObjectInfo(objectType, objectId, objectData) {
     const card = document.getElementById('selectedObjectCard');
     const title = document.getElementById('selectedObjectTitle');
     const info = document.getElementById('selectedObjectInfo');
@@ -265,10 +307,13 @@ function updateSelectedObjectInfo(objectType, objectId, objectData) {
                             <strong>Adresse:</strong> <span id="siteAddress">Chargement...</span>
                         </div>
                         <div class="info-item">
-                            <strong>Électricité 1er palier:</strong> <span id="siteTier1Rate">Chargement...</span> $/kWh
+                            <strong>Limite 1er palier:</strong> <span id="siteTier1Limit">Chargement...</span>
                         </div>
                         <div class="info-item">
-                            <strong>Électricité 2ème palier:</strong> <span id="siteTier2Rate">Chargement...</span> $/kWh
+                            <strong>Électricité 1er palier:</strong> <span id="siteTier1Rate">Chargement...</span>
+                        </div>
+                        <div class="info-item">
+                            <strong>Électricité 2ème palier:</strong> <span id="siteTier2Rate">Chargement...</span>
                         </div>
                     </div>
                     <div class="col-md-6">
@@ -284,6 +329,11 @@ function updateSelectedObjectInfo(objectType, objectId, objectData) {
                     </div>
                 </div>
             `;
+            
+            // Mettre à jour les informations du site avec les données reçues
+            if (objectData) {
+                await updateSiteInfoDisplay(objectData);
+            }
             break;
             
         case 'machine':
@@ -328,11 +378,101 @@ function updateSelectedObjectInfo(objectType, objectId, objectData) {
     }
 }
 
+// Update Site Info Display
+async function updateSiteInfoDisplay(siteData) {
+    // Mettre à jour les informations du site dans la section "Site : <nom du site>"
+    const siteAddress = document.getElementById('siteAddress');
+    const siteTier1Rate = document.getElementById('siteTier1Rate');
+    const siteTier1Limit = document.getElementById('siteTier1Limit');
+    const siteTier2Rate = document.getElementById('siteTier2Rate');
+    const siteCurrency = document.getElementById('siteCurrency');
+    const siteMachineCount = document.getElementById('siteMachineCount');
+    const siteTotalHashrate = document.getElementById('siteTotalHashrate');
+    
+    if (siteAddress) {
+        siteAddress.textContent = siteData.address || 'Non spécifiée';
+    }
+    
+    // Récupérer les valeurs globales depuis l'API
+    let globalTier1Rate = null;
+    let globalTier1Limit = null;
+    let globalTier2Rate = null;
+    
+    try {
+        const configResponse = await fetch(`${API_BASE}/config/app/settings`);
+        if (configResponse.ok) {
+            const config = await configResponse.json();
+            globalTier1Rate = parseFloat(config.settings.electricity_tier1_rate);
+            globalTier1Limit = parseInt(config.settings.electricity_tier1_limit);
+            globalTier2Rate = parseFloat(config.settings.electricity_tier2_rate);
+        }
+    } catch (error) {
+        console.error('Erreur lors du chargement de la configuration globale:', error);
+    }
+    
+    // Créer un objet fallbackInfo basé sur les données du site vs globales
+    const fallbackInfo = {
+        tier1_rate_is_fallback: !siteData.electricity_tier1_rate || parseFloat(siteData.electricity_tier1_rate) <= 0,
+        tier2_rate_is_fallback: !siteData.electricity_tier2_rate || parseFloat(siteData.electricity_tier2_rate) <= 0,
+        tier1_limit_is_fallback: !siteData.electricity_tier1_limit || parseInt(siteData.electricity_tier1_limit) <= 0
+    };
+    
+    // Utiliser la fonction unifiée pour formater les données
+    const electricityData = formatElectricityData(
+        siteData,
+        fallbackInfo,
+        {
+            electricity_tier1_rate: globalTier1Rate,
+            electricity_tier2_rate: globalTier2Rate,
+            electricity_tier1_limit: globalTier1Limit
+        }
+    );
+    
+    if (siteTier1Rate) {
+        if (electricityData.tier1 !== 'N/A') {
+            siteTier1Rate.innerHTML = electricityData.tier1;
+        } else {
+            siteTier1Rate.innerHTML = `<span class="text-danger">Erreur: Aucune valeur disponible</span>`;
+        }
+    }
+    
+    if (siteTier1Limit) {
+        if (electricityData.limit !== 'N/A') {
+            siteTier1Limit.innerHTML = electricityData.limit;
+        } else {
+            siteTier1Limit.innerHTML = `<span class="text-danger">Erreur: Aucune valeur disponible</span>`;
+        }
+    }
+    
+    if (siteTier2Rate) {
+        if (electricityData.tier2 !== 'N/A') {
+            siteTier2Rate.innerHTML = electricityData.tier2;
+        } else {
+            siteTier2Rate.innerHTML = `<span class="text-danger">Erreur: Aucune valeur disponible</span>`;
+        }
+    }
+    
+    if (siteCurrency) {
+        siteCurrency.textContent = siteData.preferred_currency || 'CAD';
+    }
+    
+    // Note: Les données machine_count et total_hashrate sont gérées par loadSiteStatistics
+    // pour éviter les conflits d'affichage
+}
+
 // Load Site Summary
 async function loadSiteSummary(siteId) {
+    // Ne rien faire si ce site est marqué supprimé
+    if (deletedSiteIds.has(siteId)) return;
     try {
         const response = await fetch(`${API_BASE}/sites/${siteId}/summary`);
         if (!response.ok) {
+            if (response.status === 404) {
+                // Site supprimé ou inexistant: masquer proprement la vue
+                const card = document.getElementById('siteSummaryCard');
+                if (card) card.style.display = 'none';
+                return;
+            }
             throw new Error('Failed to load site summary');
         }
         
@@ -341,6 +481,8 @@ async function loadSiteSummary(siteId) {
         
     } catch (error) {
         console.error('Error loading site summary:', error);
+        // Si on arrive ici suite à une suppression, ne pas spammer d'alertes
+        if (String(error).includes('404')) return;
         showNotification('Erreur lors du chargement de la synthèse du site', 'error');
     }
 }
@@ -418,15 +560,15 @@ function updateSiteSummaryDisplay(summary) {
         return;
     }
     
-            // Remplir le tableau avec les machines
-        summary.machines.forEach(machine => {
-            // Déterminer l'affichage du ratio actuel
-            let currentRatioDisplay = 'N/A';
-            let currentRatioClass = '';
+    // Remplir le tableau avec les machines
+    summary.machines.forEach(machine => {
+        // Déterminer l'affichage du ratio actuel
+        let currentRatioDisplay = 'N/A';
+        let currentRatioClass = '';
+        
+        if (machine.current_ratio !== null && machine.current_ratio !== undefined) {
+            currentRatioDisplay = machine.current_ratio.toFixed(3);
             
-            if (machine.current_ratio !== null && machine.current_ratio !== undefined) {
-                currentRatioDisplay = machine.current_ratio.toFixed(3);
-                
                 // Logique d'affichage des icônes multiples
                 let icons = [];
                 
@@ -443,7 +585,7 @@ function updateSiteSummaryDisplay(summary) {
                         currentRatioClass = 'text-success';
                     } else {
                         icons.push('<i class="fas fa-exclamation-triangle text-warning" title="Ratio optimal global a changé"></i>');
-                        currentRatioClass = 'text-warning';
+                currentRatioClass = 'text-warning';
                     }
                 }
                 // Sinon, logique existante pour les autres types
@@ -452,7 +594,7 @@ function updateSiteSummaryDisplay(summary) {
                     if (machine.optimal_ratio && Math.abs(machine.current_ratio - machine.optimal_ratio) < 0.01) {
                         icons.push('<i class="fas fa-cog text-info" title="Ratio optimal"></i>');
                         if (machine.current_ratio !== 1.0) {
-                            currentRatioClass = 'text-info';
+                currentRatioClass = 'text-info';
                         }
                     }
                     
@@ -473,7 +615,7 @@ function updateSiteSummaryDisplay(summary) {
                 
                 // Ajouter les icônes au display
                 currentRatioDisplay += ' ' + icons.join(' ');
-            }
+        }
         
         const row = `
             <tr>
@@ -525,8 +667,6 @@ function updateSiteSummaryDisplay(summary) {
         <tr class="table-light">
             <td colspan="10" class="small text-muted">
                 <i class="fas fa-info-circle"></i> 
-                Électricité: ${summary.electricity_tier1_rate}$/kWh (premier ${summary.electricity_tier1_limit}kWh), 
-                ${summary.electricity_tier2_rate}$/kWh (reste). 
                 Machines triées par efficacité (TH/s/W). 
                 <i class="fas fa-cog text-info"></i> Ratio optimal, 
                 <i class="fas fa-globe text-success"></i> Ratio optimal global,
@@ -733,10 +873,7 @@ function updateGlobalOptimizationResults(result) {
                                         <div id="optimization3DChart" style="width: 100%; height: 500px; min-height: 500px;"></div>
                                     </div>
                                 </div>
-                                <div class="alert alert-info mt-3">
-                                    <i class="fas fa-info-circle"></i>
-                                    <strong>Graphique 3D :</strong> Visualisez les zones de profit optimal en 3D. Les pics représentent les sweet spots.
-                                </div>
+
                             </div>
                         </div>
         
@@ -842,10 +979,6 @@ function showGlobalOptimizationResults(result) {
                                         <div id="optimization3DChart" style="width: 100%; height: 500px; min-height: 500px;"></div>
                                     </div>
                                 </div>
-                                <div class="alert alert-info mt-3">
-                                    <i class="fas fa-info-circle"></i>
-                                    <strong>Graphique 3D :</strong> Visualisez les zones de profit optimal en 3D. Les pics représentent les sweet spots.
-                                </div>
                             </div>
                         </div>
                         
@@ -941,7 +1074,7 @@ function showFineOptimizationConfig(siteId, globalResults = null) {
                         
                         <div class="alert alert-warning">
                             <i class="fas fa-clock"></i>
-                            <strong>Temps estimé :</strong> L'optimisation fine peut prendre 1-3 minutes selon les paramètres choisis.
+                            <strong>Temps estimé :</strong> L'optimisation fine peut prendre plusieursminutes selon les paramètres choisis.
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -1051,7 +1184,7 @@ function showFineOptimizationLoading() {
                             <h4 class="mt-3 text-white">Optimisation Fine en cours...</h4>
                             <p class="text-muted">
                                 <i class="fas fa-cogs"></i> 
-                                Optimisation fine autour des sweet spots. Cela peut prendre quelques secondes.
+                                Optimisation fine autour des sweet spots. Cela peut prendre quelques minutes.
                             </p>
                             <div class="progress mt-3" style="height: 10px;">
                                 <div class="progress-bar progress-bar-striped progress-bar-animated" 
@@ -1217,10 +1350,7 @@ function updateFineOptimizationResults(result) {
                                         <div id="globalOptimization3DChart" style="width: 100%; height: 250px; min-height: 250px;"></div>
                                     </div>
                                 </div>
-                                <div class="alert alert-info mt-2">
-                                    <i class="fas fa-info-circle"></i>
-                                    <strong>Graphique 3D (Global) :</strong> Visualisation des sweet spots avec optimisation grossière (step 0.05).
-                                </div>
+
                             </div>
                             <div class="col-md-6">
                                 <h6><i class="fas fa-chart-area"></i> Optimisation Fine (Précise)</h6>
@@ -1229,10 +1359,7 @@ function updateFineOptimizationResults(result) {
                                         <div id="fineOptimization3DChart" style="width: 100%; height: 250px; min-height: 250px;"></div>
                                     </div>
                                 </div>
-                                <div class="alert alert-info mt-2">
-                                    <i class="fas fa-info-circle"></i>
-                                    <strong>Graphique 3D (Fine) :</strong> Visualisation des sweet spots avec optimisation fine (step ${result.fine_step}).
-                                </div>
+
                             </div>
                         </div>
                         
@@ -1357,10 +1484,6 @@ function showFineOptimizationResults(result) {
                                     <div class="card-body">
                                         <div id="fineOptimization3DChart" style="width: 100%; height: 500px; min-height: 500px;"></div>
                                     </div>
-                                </div>
-                                <div class="alert alert-info mt-3">
-                                    <i class="fas fa-info-circle"></i>
-                                    <strong>Graphique 3D :</strong> Visualisez les zones de profit optimal en 3D. Les pics représentent les sweet spots.
                                 </div>
                             </div>
                         </div>
@@ -1898,7 +2021,7 @@ function updateMultiOptimalDisplay(multiOptimal) {
     tfoot.innerHTML = '';
     
     if (multiOptimal.machines.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="text-center">Aucune machine dans ce site</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" class="text-center">Aucune machine dans ce site</td></tr>';
         return;
     }
     
@@ -1946,6 +2069,12 @@ function updateMultiOptimalDisplay(multiOptimal) {
             currentRatioDisplay += ' ' + icons.join(' ');
         }
         
+        // Déterminer l'affichage du ratio optimal global
+        let globalOptimalDisplay = 'N/A';
+        if (machine.global_optimal_ratio !== null && machine.global_optimal_ratio !== undefined) {
+            globalOptimalDisplay = machine.global_optimal_ratio.toFixed(3);
+        }
+        
         const row = `
             <tr>
                 <td>${machine.name}</td>
@@ -1958,11 +2087,15 @@ function updateMultiOptimalDisplay(multiOptimal) {
                 </td>
                 <td>${machine.efficiency.toFixed(3)} TH/s/W</td>
                 <td>${machine.optimal_ratio.toFixed(3)}</td>
+                <td>${globalOptimalDisplay}</td>
                 <td class="${currentRatioClass}">${currentRatioDisplay}</td>
             </tr>
         `;
         tbody.innerHTML += row;
     });
+    
+    // Utiliser la fonction unifiée pour formater les données d'électricité
+    const electricityData = formatElectricityData(multiOptimal, multiOptimal.electricity_fallback_info);
     
     // Ajouter les totaux
     const footer = `
@@ -1978,14 +2111,16 @@ function updateMultiOptimalDisplay(multiOptimal) {
             <td></td>
             <td></td>
             <td></td>
+            <td></td>
         </tr>
         <tr class="table-light">
-            <td colspan="9" class="small text-muted">
+            <td colspan="10" class="small text-muted">
                 <i class="fas fa-info-circle"></i> 
                 Optimisation séquentielle: Machines triées par efficacité (TH/s/W), 
                 ratios optimaux calculés individuellement, paliers d'électricité appliqués dans l'ordre d'efficacité.
-                Électricité: ${multiOptimal.electricity_tier1_rate}$/kWh (premier ${multiOptimal.electricity_tier1_limit}kWh), 
-                ${multiOptimal.electricity_tier2_rate}$/kWh (reste).
+                Électricité: 
+                ${electricityData.tier1} (premier ${electricityData.limit}), 
+                ${electricityData.tier2} (reste).
             </td>
         </tr>
     `;
@@ -2116,59 +2251,42 @@ function showRatioAnalysisLoading() {
 
 // Load Site Statistics
 async function loadSiteStatistics(siteId) {
+    // Ne rien faire si ce site est marqué supprimé
+    if (deletedSiteIds.has(siteId)) return;
     try {
         // Charger les statistiques du site
         const statsResponse = await fetch(`${API_BASE}/sites/${siteId}/statistics`);
         if (!statsResponse.ok) {
+            if (statsResponse.status === 404) {
+                // Site supprimé ou inexistant: vider les compteurs et sortir
+                const machineCount = document.getElementById('siteMachineCount');
+                const totalHashrate = document.getElementById('siteTotalHashrate');
+                if (machineCount) machineCount.textContent = '';
+                if (totalHashrate) totalHashrate.textContent = '';
+                return;
+            }
             throw new Error('Failed to load site statistics');
         }
         
         const stats = await statsResponse.json();
         
-        // Charger les données du site
-        const siteResponse = await fetch(`${API_BASE}/sites/${siteId}`);
-        if (siteResponse.ok) {
-            const siteData = await siteResponse.json();
-            
-            // Update site title
-            const title = document.getElementById('selectedObjectTitle');
-            if (title && siteData?.name) {
-                title.textContent = `Site: ${siteData.name}`;
-            }
-            
-            // Update site address
-            const siteAddress = document.getElementById('siteAddress');
-            if (siteAddress) {
-                siteAddress.textContent = siteData?.address || 'Non spécifiée';
-            }
-            
-            // Update electricity rates
-            const siteTier1Rate = document.getElementById('siteTier1Rate');
-            if (siteTier1Rate) {
-                siteTier1Rate.textContent = siteData?.electricity_tier1_rate || '0';
-            }
-            
-            const siteTier2Rate = document.getElementById('siteTier2Rate');
-            if (siteTier2Rate) {
-                siteTier2Rate.textContent = siteData?.electricity_tier2_rate || '0';
-            }
-            
-            // Update currency
-            const siteCurrency = document.getElementById('siteCurrency');
-            if (siteCurrency) {
-                siteCurrency.textContent = siteData?.preferred_currency || 'CAD';
-            }
-        }
+        // Note: Les données du site sont rechargées séparément dans saveSite
+        // pour éviter les conflits d'affichage
         
         // Update site statistics
         const machineCount = document.getElementById('siteMachineCount');
         const totalHashrate = document.getElementById('siteTotalHashrate');
         
-        if (machineCount) machineCount.textContent = `${stats.machines_count} machine(s)`;
-        if (totalHashrate) totalHashrate.textContent = `${stats.total_hashrate} TH/s`;
+        if (machineCount) {
+            machineCount.textContent = `${stats.machines_count} machine(s)`;
+        }
+        if (totalHashrate) {
+            totalHashrate.textContent = `${stats.total_hashrate} TH/s`;
+        }
         
     } catch (error) {
         console.error('Error loading site statistics:', error);
+        if (String(error).includes('404')) return;
         showNotification('Erreur lors du chargement des statistiques du site', 'error');
     }
 }
@@ -2501,7 +2619,7 @@ async function calculateOptimalAutomatically() {
         return;
     } else {
         // Fallback pour les machines individuelles (sans site ou machine sélectionnée)
-        await calculateOptimal('economic');
+    await calculateOptimal('economic');
     }
 }
 
@@ -2991,23 +3109,23 @@ async function saveConfiguration() {
             throw new Error('Erreur lors de la sauvegarde de la configuration globale');
         }
         
-        // Fermer le modal
-        bootstrap.Modal.getInstance(document.getElementById('configModal')).hide();
-        showNotification('Configuration sauvegardée!', 'success');
-        
-        // Recharger les données de marché avec la nouvelle configuration
-        loadMarketData();
-        
-        // Recalculer l'optimisation avec la nouvelle configuration
-        if (currentMachineId) {
-            await calculateOptimalAutomatically();
-        }
-        
-        // Recharger le graphique d'analyse des ratios si une machine est sélectionnée
-        if (currentMachineId && (currentObjectType === 'machine' || currentObjectType === 'template')) {
-            const templateId = currentObjectData?.template_id || currentMachineId;
-            loadRatioAnalysisChart(templateId);
-        }
+            // Fermer le modal
+            bootstrap.Modal.getInstance(document.getElementById('configModal')).hide();
+            showNotification('Configuration sauvegardée!', 'success');
+            
+            // Recharger les données de marché avec la nouvelle configuration
+            loadMarketData();
+            
+            // Recalculer l'optimisation avec la nouvelle configuration
+            if (currentMachineId) {
+                await calculateOptimalAutomatically();
+            }
+            
+            // Recharger le graphique d'analyse des ratios si une machine est sélectionnée
+            if (currentMachineId && (currentObjectType === 'machine' || currentObjectType === 'template')) {
+                const templateId = currentObjectData?.template_id || currentMachineId;
+                loadRatioAnalysisChart(templateId);
+            }
         
         // Recharger le résumé du site si un site est sélectionné
         if (currentSiteId) {
@@ -3126,13 +3244,13 @@ function updateSitesMachinesTree(sites, templates, siteInstances) {
                         <span class="site-toggle" id="toggle-${site.id}">▼</span>
                     </div>
                     <div class="site-actions">
-                        <button class="btn btn-sm btn-outline-primary" onclick="addMachineToSite(${site.id})" title="Ajouter machine">
+                        <button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation(); addMachineToSite(${site.id})" title="Ajouter machine">
                             <i class="fas fa-plus"></i>
                         </button>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="openSiteModal(${site.id})" title="Modifier site">
+                        <button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); openSiteModal(${site.id})" title="Modifier site">
                             <i class="fas fa-edit"></i>
                         </button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteSite(${site.id})" title="Supprimer site">
+                        <button class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); deleteSite(${site.id})" title="Supprimer site">
                             <i class="fas fa-trash"></i>
                         </button>
                     </div>
@@ -3274,9 +3392,9 @@ async function saveSite() {
             name: document.getElementById('siteName').value,
             address: document.getElementById('siteAddress').value,
             braiins_token: document.getElementById('siteBraiinsToken').value,
-            electricity_tier1_rate: parseFloat(document.getElementById('siteModalTier1Rate').value),
-            electricity_tier1_limit: parseInt(document.getElementById('siteModalTier1Limit').value),
-            electricity_tier2_rate: parseFloat(document.getElementById('siteModalTier2Rate').value),
+            electricity_tier1_rate: document.getElementById('siteModalTier1Rate').value ? parseFloat(document.getElementById('siteModalTier1Rate').value) : null,
+            electricity_tier1_limit: document.getElementById('siteModalTier1Limit').value ? parseInt(document.getElementById('siteModalTier1Limit').value) : null,
+            electricity_tier2_rate: document.getElementById('siteModalTier2Rate').value ? parseFloat(document.getElementById('siteModalTier2Rate').value) : null,
             preferred_currency: document.getElementById('siteCurrency').value
         };
         
@@ -3298,10 +3416,25 @@ async function saveSite() {
             throw new Error('Failed to save site');
         }
         
-        // Close modal and reload sites
+        // Close modal and show success
         bootstrap.Modal.getInstance(document.getElementById('siteModal')).hide();
         showNotification('Site sauvegardé avec succès!', 'success');
-        loadSitesAndMachines();
+
+        // Récupérer le site sauvegardé (crée ou mis à jour)
+        let saved;
+        try {
+            saved = await response.json();
+        } catch (_) {
+            saved = null;
+        }
+        const savedSiteId = saved?.id || currentSiteId;
+
+        // Recharger l'arbre sans auto-sélection, puis sélectionner explicitement le site sauvegardé
+        await loadSitesAndMachines(false);
+        if (savedSiteId) {
+            // Si nous avons les données du site, passons-les pour éviter un fetch immédiat
+            selectObject('site', savedSiteId, saved || null);
+        }
         
     } catch (error) {
         console.error('Error saving site:', error);
@@ -3330,7 +3463,30 @@ async function deleteSite(siteId) {
         }
         
         showNotification('Site supprimé avec succès!', 'success');
-        loadSitesAndMachines();
+        deletedSiteIds.add(siteId);
+        // Si le site supprimé était sélectionné, réinitialiser la sélection
+        if (currentSiteId === siteId && currentObjectType === 'site') {
+            currentSiteId = null;
+            currentObjectType = null;
+            currentObjectId = null;
+            currentObjectData = null;
+            // Masquer/vider les vues spécifiques au site
+            const siteSummaryCard = document.getElementById('siteSummaryCard');
+            if (siteSummaryCard) siteSummaryCard.style.display = 'none';
+            const machineCount = document.getElementById('siteMachineCount');
+            const totalHashrate = document.getElementById('siteTotalHashrate');
+            if (machineCount) machineCount.textContent = '';
+            if (totalHashrate) totalHashrate.textContent = '';
+            // Afficher l'écran d'accueil
+            showWelcomeMessage();
+        }
+        // Retirer immédiatement le site supprimé de l'arbre pour éviter des clics résiduels
+        const headerEl = document.querySelector(`.site-header[data-site-id="${siteId}"]`);
+        if (headerEl) {
+            const group = headerEl.closest('.site-group');
+            if (group) group.remove();
+        }
+        await loadSitesAndMachines(true);
         
     } catch (error) {
         console.error('Error deleting site:', error);
@@ -4122,9 +4278,9 @@ async function applyManualRatio() {
         const availableRatios = await loadAvailableRatios(currentSiteId);
         if (!availableRatios || !availableRatios.common_ratios || availableRatios.common_ratios.length === 0) {
             showNotification('Impossible de charger les ratios disponibles', 'error');
-            return;
-        }
-
+        return;
+    }
+    
         // Créer un modal avec slider
         const modal = document.createElement('div');
         modal.className = 'modal fade';
@@ -4306,12 +4462,12 @@ async function confirmMachineRatio(instanceId) {
                 optimization_type: 'economic'
             })
         });
-
+        
         if (!response.ok) {
             const errorData = await response.json();
             throw new Error(errorData.detail || 'Failed to apply ratio to machine');
         }
-
+        
         const result = await response.json();
         await loadSiteSummary(currentSiteId);
         showNotification(`Ratio ${(ratio * 100).toFixed(0)}% appliqué avec succès à la machine!`, 'success');
@@ -4331,7 +4487,7 @@ async function confirmManualRatio() {
         // Fermer le modal
         const modal = bootstrap.Modal.getInstance(document.getElementById('ratioSliderModal'));
         modal.hide();
-
+        
         const response = await fetch(`${API_BASE}/sites/${currentSiteId}/apply-manual-ratio`, {
             method: 'POST',
             headers: {
