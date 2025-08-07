@@ -919,7 +919,7 @@ async def get_site_available_ratios(site_id: int, db: Session = Depends(get_db))
                     else:
                         common_ratios = common_ratios.intersection(set(valid_ratios))
                         
-                                                        except Exception as e:
+            except Exception as e:
                 continue
     
     if not available_ratios:

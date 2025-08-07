@@ -11,7 +11,7 @@ let efficiencyData = [];
 const API_BASE = 'http://localhost:8000/api/v1';
 
 // Application Version
-const APP_VERSION = '4.4';
+const APP_VERSION = '4.5';
 
 // Version: 2.0 - Templates System
 // Initialize the application
