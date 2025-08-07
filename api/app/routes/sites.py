@@ -650,6 +650,7 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                     "daily_revenue": daily_revenue,
                     "efficiency_th_per_watt": final_efficiency,
                     "optimal_ratio": optimal_ratio,
+                    "global_optimal_ratio": float(instance.global_optimal_ratio) if instance.global_optimal_ratio is not None else None,
                     "current_ratio": current_ratio,
                     "ratio_type": ratio_type
                 })
@@ -1359,29 +1360,18 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
     if best_combination is None:
         raise HTTPException(status_code=400, detail="Impossible de calculer l'optimisation globale")
     
-    # Appliquer la meilleure combinaison
-    instances_updated = 0
+    # Stocker les ratios optimaux globaux (sans les appliquer automatiquement)
+    # L'optimisation globale peut toujours stocker ses résultats
     for machine in machines:
         optimal_ratio = best_combination[machine.id]
-        
-        # Si le ratio optimal est 0.0, la machine est désactivée
-        if optimal_ratio == 0.0:
-            machine.optimal_ratio = 0.0
-            machine.ratio_type = 'disabled'
-        # Si le ratio optimal est 1.0, c'est considéré comme nominal
-        elif optimal_ratio == 1.0:
-            machine.optimal_ratio = None
-            machine.ratio_type = 'nominal'
-        else:
-            machine.optimal_ratio = optimal_ratio
-            machine.ratio_type = 'optimal'
-        
-        instances_updated += 1
+        machine.global_optimal_ratio = optimal_ratio
     
     db.commit()
     
+    instances_updated = 0
+    
     return {
-        "message": f"Optimisation globale appliquée avec succès à {len(machines)} machine(s)",
+        "message": f"Optimisation globale calculée pour {len(machines)} machine(s) - Prêt à appliquer",
         "site_id": site_id,
         "site_name": site.name,
         "combinations_tested": len(all_combinations),
@@ -1391,3 +1381,651 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
         "all_results": all_results,  # Tous les résultats pour le CSV
         "instances_updated": instances_updated
     } 
+
+@router.post("/sites/{site_id}/fine-optimization")
+async def fine_site_optimization(
+    site_id: int, 
+    fine_range: float = 0.10,
+    fine_step: float = 0.01,
+    global_results: dict = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Optimisation fine autour des sweet spots identifiés par l'optimisation globale
+    """
+    # Récupérer le site et ses machines
+    site = db.query(models.MiningSite).filter(models.MiningSite.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site non trouvé")
+    
+    machines = db.query(models.SiteMachineInstance).filter(
+        models.SiteMachineInstance.site_id == site_id
+    ).all()
+    
+    if not machines:
+        raise HTTPException(status_code=400, detail="Aucune machine trouvée dans ce site")
+    
+    # Récupérer les données communes
+    from ..routes.efficiency import get_market_and_electricity_data
+    common_data = get_market_and_electricity_data(db)
+    electricity_tier1_rate = common_data["electricity_tier1_rate"]
+    electricity_tier2_rate = common_data["electricity_tier2_rate"]
+    electricity_tier1_limit = common_data["electricity_tier1_limit"]
+    
+    # Paramètres d'optimisation fine (maintenant reçus directement)
+    fine_range = fine_range
+    fine_step = fine_step
+    
+    # Si on a des résultats globaux, utiliser l'approche optimisée
+    if global_results and global_results.get("all_results"):
+        print(f"Optimisation fine basée sur les résultats globaux existants...")
+        return await perform_fine_optimization_from_global_results(
+            site, machines, global_results, fine_range, fine_step, 
+            common_data, electricity_tier1_rate, electricity_tier2_rate, electricity_tier1_limit, db
+        )
+    
+    # Sinon, faire l'optimisation complète (approche actuelle)
+    print(f"Optimisation fine complète (sans résultats globaux)...")
+    
+    # Pour chaque machine, récupérer les ratios disponibles
+    machine_ratios = {}
+    machine_templates = {}
+    
+    for machine in machines:
+        template = db.query(models.MachineTemplate).filter(
+            models.MachineTemplate.id == machine.template_id,
+            models.MachineTemplate.is_active == True
+        ).first()
+        
+        if not template:
+            continue
+            
+        machine_templates[machine.id] = template
+        
+        # Récupérer les ratios disponibles pour cette machine
+        from ..routes.efficiency import get_available_ratios
+        available_ratios = get_available_ratios(template.id, db)
+        
+        if available_ratios and available_ratios.get("all_ratios"):
+            machine_ratios[machine.id] = available_ratios["all_ratios"]
+        else:
+            # Si pas de données d'efficacité, utiliser un ratio nominal
+            machine_ratios[machine.id] = [1.0]
+    
+    if not machine_ratios:
+        raise HTTPException(status_code=400, detail="Aucune donnée d'efficacité disponible pour les machines du site")
+    
+    # ÉTAPE 1 : Optimisation grossière (comme l'optimisation globale actuelle)
+    print(f"Étape 1 : Optimisation grossière...")
+    
+    # Générer toutes les combinaisons possibles de ratios
+    from itertools import product
+    
+    # Créer les listes de ratios pour chaque machine
+    ratio_lists = [machine_ratios[machine.id] for machine in machines]
+    
+    # Générer toutes les combinaisons normales
+    all_combinations = list(product(*ratio_lists))
+    
+    # Ajouter des combinaisons avec machines désactivées (ratio = 0)
+    from itertools import combinations
+    
+    additional_combinations = []
+    
+    # Pour chaque nombre de machines à activer (de 1 à toutes les machines)
+    for num_active in range(1, len(machines)):
+        # Pour chaque combinaison de machines actives
+        for active_machines_indices in combinations(range(len(machines)), num_active):
+            # Créer une combinaison où les machines inactives ont ratio = 0
+            combination = [0.0] * len(machines)  # Toutes les machines désactivées par défaut
+            
+            # Pour chaque machine active, générer toutes les combinaisons de ratios possibles
+            active_ratio_lists = [ratio_lists[i] for i in active_machines_indices]
+            active_combinations = list(product(*active_ratio_lists))
+            
+            for active_combination in active_combinations:
+                # Créer la combinaison complète
+                for i, active_idx in enumerate(active_machines_indices):
+                    combination[active_idx] = active_combination[i]
+                
+                additional_combinations.append(tuple(combination))
+    
+    # Combiner toutes les combinaisons
+    all_combinations.extend(additional_combinations)
+    
+    print(f"Test de {len(all_combinations)} combinaisons grossières...")
+    
+    coarse_results = []
+    
+    # Tester chaque combinaison grossière
+    for combination in all_combinations:
+        try:
+            # Créer un mapping machine_id -> ratio
+            machine_ratio_map = {machines[i].id: combination[i] for i in range(len(machines))}
+            
+            # Calculer les performances de chaque machine avec ce ratio
+            machine_performances = []
+            total_hashrate = 0
+            total_power = 0
+            
+            for machine in machines:
+                template = machine_templates[machine.id]
+                ratio = machine_ratio_map[machine.id]
+                
+                # Si le ratio est 0, la machine est désactivée
+                if ratio == 0.0:
+                    machine_performances.append({
+                        "machine_id": machine.id,
+                        "template_id": template.id,
+                        "name": machine.custom_name or template.model,
+                        "ratio": ratio,
+                        "hashrate": 0.0,
+                        "power": 0,
+                        "efficiency": 0.0,
+                        "status": "disabled"
+                    })
+                else:
+                    # Obtenir l'efficacité pour ce ratio
+                    from ..routes.efficiency import get_machine_efficiency_at_ratio
+                    efficiency_result = await get_machine_efficiency_at_ratio(template.id, ratio, db)
+                    
+                    hashrate = float(efficiency_result["effective_hashrate"])
+                    power = int(efficiency_result["power_consumption"])
+                    efficiency = hashrate / power if power > 0 else 0.0
+                    
+                    machine_performances.append({
+                        "machine_id": machine.id,
+                        "template_id": template.id,
+                        "name": machine.custom_name or template.model,
+                        "ratio": ratio,
+                        "hashrate": hashrate,
+                        "power": power,
+                        "efficiency": efficiency,
+                        "status": "active"
+                    })
+                    
+                    total_hashrate += hashrate
+                    total_power += power
+            
+            # Calculer le profit total
+            daily_revenue = 0
+            if common_data.get("fpps_rate") and common_data["fpps_rate"] != -1:
+                fpps_sats_per_day = int(float(common_data["fpps_rate"]) * 100000000)
+                sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
+                
+                if common_data.get("bitcoin_price") and common_data["bitcoin_price"] != -1:
+                    hourly_revenue_cad = sats_per_hour * common_data["bitcoin_price"] / 100000000
+                    daily_revenue = hourly_revenue_cad * 24
+            
+            # Calculer les coûts d'électricité avec paliers
+            daily_power_kwh = (total_power * 24) / 1000
+            
+            if electricity_tier1_rate == -1 or electricity_tier2_rate == -1 or electricity_tier1_limit == -1:
+                daily_electricity_cost = 0
+            else:
+                if daily_power_kwh <= electricity_tier1_limit:
+                    daily_electricity_cost = daily_power_kwh * electricity_tier1_rate
+                else:
+                    tier1_cost = electricity_tier1_limit * electricity_tier1_rate
+                    tier2_cost = (daily_power_kwh - electricity_tier1_limit) * electricity_tier2_rate
+                    daily_electricity_cost = tier1_cost + tier2_cost
+            
+            daily_profit = daily_revenue - daily_electricity_cost
+            
+            coarse_results.append({
+                "combination": combination,
+                "machine_ratio_map": machine_ratio_map,
+                "machine_performances": machine_performances,
+                "total_hashrate": total_hashrate,
+                "total_power": total_power,
+                "daily_revenue": daily_revenue,
+                "daily_electricity_cost": daily_electricity_cost,
+                "daily_profit": daily_profit
+            })
+            
+        except Exception as e:
+            print(f"Erreur lors du test de la combinaison {combination}: {e}")
+            continue
+    
+    # Identifier les top 5 combinaisons prometteuses
+    coarse_results.sort(key=lambda x: x["daily_profit"], reverse=True)
+    top_combinations = coarse_results[:5]
+    
+    print(f"Top 5 combinaisons grossières identifiées pour l'optimisation fine...")
+    
+    # ÉTAPE 2 : Optimisation fine autour des sweet spots
+    print(f"Étape 2 : Optimisation fine avec range ±{fine_range} et step {fine_step}...")
+    
+    fine_results = []
+    
+    for top_combo in top_combinations:
+        # Créer les ranges fins pour chaque machine
+        fine_ranges = []
+        for i, ratio in enumerate(top_combo['combination']):
+            if ratio > 0:  # Ignorer les machines désactivées
+                # Créer un range fin autour du ratio prometteur
+                min_ratio = max(0.5, ratio - fine_range)  # Minimum 0.5
+                max_ratio = min(1.5, ratio + fine_range)  # Maximum 1.5
+                
+                # Générer les ratios fins
+                fine_ratios = []
+                current_ratio = min_ratio
+                while current_ratio <= max_ratio:
+                    fine_ratios.append(round(current_ratio, 2))
+                    current_ratio += fine_step
+                
+                fine_ranges.append(fine_ratios)
+            else:
+                fine_ranges.append([0.0])  # Machine désactivée
+        
+        # Générer toutes les combinaisons fines
+        fine_combinations = list(product(*fine_ranges))
+        
+        # Tester chaque combinaison fine
+        for fine_combo in fine_combinations:
+            try:
+                # Créer un mapping machine_id -> ratio
+                machine_ratio_map = {machines[i].id: fine_combo[i] for i in range(len(machines))}
+                
+                # Calculer les performances de chaque machine avec ce ratio
+                machine_performances = []
+                total_hashrate = 0
+                total_power = 0
+                
+                for machine in machines:
+                    template = machine_templates[machine.id]
+                    ratio = machine_ratio_map[machine.id]
+                    
+                    # Si le ratio est 0, la machine est désactivée
+                    if ratio == 0.0:
+                        machine_performances.append({
+                            "machine_id": machine.id,
+                            "template_id": template.id,
+                            "name": machine.custom_name or template.model,
+                            "ratio": ratio,
+                            "hashrate": 0.0,
+                            "power": 0,
+                            "efficiency": 0.0,
+                            "status": "disabled"
+                        })
+                    else:
+                        # Obtenir l'efficacité pour ce ratio
+                        from ..routes.efficiency import get_machine_efficiency_at_ratio
+                        efficiency_result = await get_machine_efficiency_at_ratio(template.id, ratio, db)
+                        
+                        hashrate = float(efficiency_result["effective_hashrate"])
+                        power = int(efficiency_result["power_consumption"])
+                        efficiency = hashrate / power if power > 0 else 0.0
+                        
+                        machine_performances.append({
+                            "machine_id": machine.id,
+                            "template_id": template.id,
+                            "name": machine.custom_name or template.model,
+                            "ratio": ratio,
+                            "hashrate": hashrate,
+                            "power": power,
+                            "efficiency": efficiency,
+                            "status": "active"
+                        })
+                        
+                        total_hashrate += hashrate
+                        total_power += power
+                
+                # Calculer le profit total
+                daily_revenue = 0
+                if common_data.get("fpps_rate") and common_data["fpps_rate"] != -1:
+                    fpps_sats_per_day = int(float(common_data["fpps_rate"]) * 100000000)
+                    sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
+                    
+                    if common_data.get("bitcoin_price") and common_data["bitcoin_price"] != -1:
+                        hourly_revenue_cad = sats_per_hour * common_data["bitcoin_price"] / 100000000
+                        daily_revenue = hourly_revenue_cad * 24
+                
+                # Calculer les coûts d'électricité avec paliers
+                daily_power_kwh = (total_power * 24) / 1000
+                
+                if electricity_tier1_rate == -1 or electricity_tier2_rate == -1 or electricity_tier1_limit == -1:
+                    daily_electricity_cost = 0
+                else:
+                    if daily_power_kwh <= electricity_tier1_limit:
+                        daily_electricity_cost = daily_power_kwh * electricity_tier1_rate
+                    else:
+                        tier1_cost = electricity_tier1_limit * electricity_tier1_rate
+                        tier2_cost = (daily_power_kwh - electricity_tier1_limit) * electricity_tier2_rate
+                        daily_electricity_cost = tier1_cost + tier2_cost
+                
+                daily_profit = daily_revenue - daily_electricity_cost
+                
+                fine_results.append({
+                    "combination": fine_combo,
+                    "machine_ratio_map": machine_ratio_map,
+                    "machine_performances": machine_performances,
+                    "total_hashrate": total_hashrate,
+                    "total_power": total_power,
+                    "daily_revenue": daily_revenue,
+                    "daily_electricity_cost": daily_electricity_cost,
+                    "daily_profit": daily_profit,
+                    "optimization_type": "fine"
+                })
+                
+            except Exception as e:
+                print(f"Erreur lors du test de la combinaison fine {fine_combo}: {e}")
+                continue
+    
+    # Combiner tous les résultats et trouver le meilleur
+    all_results = coarse_results + fine_results
+    
+    if not all_results:
+        raise HTTPException(status_code=400, detail="Aucun résultat d'optimisation trouvé")
+    
+    all_results.sort(key=lambda x: x["daily_profit"], reverse=True)
+    
+    best_result = all_results[0]
+    
+    # Stocker les ratios optimaux globaux (sans les appliquer automatiquement)
+    for machine in machines:
+        optimal_ratio = best_result["machine_ratio_map"][machine.id]
+        machine.global_optimal_ratio = optimal_ratio
+    
+    db.commit()
+    
+    # Préparer la réponse
+    response = {
+        "message": f"Optimisation fine calculée pour {len(machines)} machine(s) - Prêt à appliquer",
+        "site_id": site_id,
+        "site_name": site.name,
+        "combinations_tested": len(all_results),
+        "coarse_combinations": len(coarse_results),
+        "fine_combinations": len(fine_results),
+        "best_profit": best_result["daily_profit"],
+        "fine_range": fine_range,
+        "fine_step": fine_step,
+        "results": {
+            "total_hashrate": best_result["total_hashrate"],
+            "total_power": best_result["total_power"],
+            "machine_performances": best_result["machine_performances"]
+        },
+        "all_results": all_results
+    }
+    
+    return response
+
+async def perform_fine_optimization_from_global_results(
+    site, machines, global_results, fine_range, fine_step, 
+    common_data, electricity_tier1_rate, electricity_tier2_rate, electricity_tier1_limit, db
+):
+    """
+    Optimisation fine basée sur les résultats de l'optimisation globale
+    """
+    print(f"Étape 2 : Optimisation fine avec range ±{fine_range} et step {fine_step}...")
+    
+    # Récupérer les top 5 combinaisons des résultats globaux
+    all_global_results = global_results["all_results"]
+    all_global_results.sort(key=lambda x: x["daily_profit"], reverse=True)
+    top_combinations = all_global_results[:5]
+    
+    print(f"Top 5 combinaisons grossières identifiées pour l'optimisation fine...")
+    
+    fine_results = []
+    
+    for top_combo in top_combinations:
+        # Créer les ranges fins pour chaque machine
+        fine_ranges = []
+        for i, ratio in enumerate(top_combo['combination']):
+            if ratio > 0:  # Ignorer les machines désactivées
+                # Créer un range fin autour du ratio prometteur
+                min_ratio = max(0.5, ratio - fine_range)  # Minimum 0.5
+                max_ratio = min(1.5, ratio + fine_range)  # Maximum 1.5
+                
+                # Générer les ratios fins
+                fine_ratios = []
+                current_ratio = min_ratio
+                while current_ratio <= max_ratio:
+                    fine_ratios.append(round(current_ratio, 2))
+                    current_ratio += fine_step
+                
+                fine_ranges.append(fine_ratios)
+            else:
+                fine_ranges.append([0.0])  # Machine désactivée
+        
+        # Générer toutes les combinaisons fines
+        from itertools import product
+        fine_combinations = list(product(*fine_ranges))
+        
+        # Tester chaque combinaison fine
+        for fine_combo in fine_combinations:
+            try:
+                # Créer un mapping machine_id -> ratio
+                machine_ratio_map = {machines[i].id: fine_combo[i] for i in range(len(machines))}
+                
+                # Calculer les performances de chaque machine avec ce ratio
+                machine_performances = []
+                total_hashrate = 0
+                total_power = 0
+                
+                for machine in machines:
+                    template = db.query(models.MachineTemplate).filter(
+                        models.MachineTemplate.id == machine.template_id,
+                        models.MachineTemplate.is_active == True
+                    ).first()
+                    
+                    ratio = machine_ratio_map[machine.id]
+                    
+                    # Si le ratio est 0, la machine est désactivée
+                    if ratio == 0.0:
+                        machine_performances.append({
+                            "machine_id": machine.id,
+                            "template_id": template.id,
+                            "name": machine.custom_name or template.model,
+                            "ratio": ratio,
+                            "hashrate": 0.0,
+                            "power": 0,
+                            "efficiency": 0.0,
+                            "status": "disabled"
+                        })
+                    else:
+                        # Obtenir l'efficacité pour ce ratio
+                        from ..routes.efficiency import get_machine_efficiency_at_ratio
+                        efficiency_result = await get_machine_efficiency_at_ratio(template.id, ratio, db)
+                        
+                        hashrate = float(efficiency_result["effective_hashrate"])
+                        power = int(efficiency_result["power_consumption"])
+                        efficiency = hashrate / power if power > 0 else 0.0
+                        
+                        machine_performances.append({
+                            "machine_id": machine.id,
+                            "template_id": template.id,
+                            "name": machine.custom_name or template.model,
+                            "ratio": ratio,
+                            "hashrate": hashrate,
+                            "power": power,
+                            "efficiency": efficiency,
+                            "status": "active"
+                        })
+                        
+                        total_hashrate += hashrate
+                        total_power += power
+                
+                # Calculer le profit total
+                daily_revenue = 0
+                if common_data.get("fpps_rate") and common_data["fpps_rate"] != -1:
+                    fpps_sats_per_day = int(float(common_data["fpps_rate"]) * 100000000)
+                    sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
+                    
+                    if common_data.get("bitcoin_price") and common_data["bitcoin_price"] != -1:
+                        hourly_revenue_cad = sats_per_hour * common_data["bitcoin_price"] / 100000000
+                        daily_revenue = hourly_revenue_cad * 24
+                
+                # Calculer les coûts d'électricité avec paliers
+                daily_power_kwh = (total_power * 24) / 1000
+                
+                if electricity_tier1_rate == -1 or electricity_tier2_rate == -1 or electricity_tier1_limit == -1:
+                    daily_electricity_cost = 0
+                else:
+                    if daily_power_kwh <= electricity_tier1_limit:
+                        daily_electricity_cost = daily_power_kwh * electricity_tier1_rate
+                    else:
+                        tier1_cost = electricity_tier1_limit * electricity_tier1_rate
+                        tier2_cost = (daily_power_kwh - electricity_tier1_limit) * electricity_tier2_rate
+                        daily_electricity_cost = tier1_cost + tier2_cost
+                
+                daily_profit = daily_revenue - daily_electricity_cost
+                
+                fine_results.append({
+                    "combination": fine_combo,
+                    "machine_ratio_map": machine_ratio_map,
+                    "machine_performances": machine_performances,
+                    "total_hashrate": total_hashrate,
+                    "total_power": total_power,
+                    "daily_revenue": daily_revenue,
+                    "daily_electricity_cost": daily_electricity_cost,
+                    "daily_profit": daily_profit,
+                    "optimization_type": "fine"
+                })
+                
+            except Exception as e:
+                print(f"Erreur lors du test de la combinaison fine {fine_combo}: {e}")
+                continue
+    
+    # Combiner les résultats globaux et fins
+    all_results = all_global_results + fine_results
+    all_results.sort(key=lambda x: x["daily_profit"], reverse=True)
+    
+    if not all_results:
+        raise HTTPException(status_code=400, detail="Aucun résultat d'optimisation trouvé")
+    
+    best_result = all_results[0]
+    
+    # Appliquer le meilleur ratio à chaque machine
+    for machine in machines:
+        optimal_ratio = best_result["machine_ratio_map"][machine.id]
+        
+        # Stocker le ratio optimal global
+        machine.global_optimal_ratio = optimal_ratio
+        
+        if optimal_ratio == 0.0:
+            machine.optimal_ratio = 0.0
+            machine.ratio_type = "disabled"
+        elif optimal_ratio == 1.0:
+            machine.optimal_ratio = None
+            machine.ratio_type = "nominal"
+        else:
+            machine.optimal_ratio = optimal_ratio
+            machine.ratio_type = "global"  # Marquer comme ratio d'optimisation globale
+    
+    db.commit()
+    
+    # Préparer la réponse
+    response = {
+        "message": f"Optimisation fine appliquée avec succès à {len(machines)} machine(s)",
+        "site_id": site.id,
+        "site_name": site.name,
+        "combinations_tested": len(all_results),
+        "coarse_combinations": len(all_global_results),
+        "fine_combinations": len(fine_results),
+        "best_profit": best_result["daily_profit"],
+        "fine_range": fine_range,
+        "fine_step": fine_step,
+        "results": {
+            "total_hashrate": best_result["total_hashrate"],
+            "total_power": best_result["total_power"],
+            "machine_performances": best_result["machine_performances"]
+        },
+        "all_results": all_results
+    }
+    
+    return response 
+
+@router.post("/sites/{site_id}/apply-global-optimization")
+async def apply_global_optimization(site_id: int, db: Session = Depends(get_db)):
+    """
+    Applique les ratios optimaux globaux calculés aux machines du site
+    """
+    # Vérifier que le site existe
+    site = db.query(models.MiningSite).filter(models.MiningSite.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site non trouvé")
+    
+    # Récupérer les machines du site
+    machines = db.query(models.SiteMachineInstance).filter(
+        models.SiteMachineInstance.site_id == site_id
+    ).all()
+    
+    if not machines:
+        raise HTTPException(status_code=400, detail="Aucune machine trouvée dans ce site")
+    
+    instances_updated = 0
+    
+    # Appliquer les ratios optimaux globaux
+    for machine in machines:
+        if machine.global_optimal_ratio is not None:
+            optimal_ratio = float(machine.global_optimal_ratio)
+            
+            # Appliquer le ratio optimal global comme ratio actuel
+            if optimal_ratio == 0.0:
+                machine.optimal_ratio = 0.0
+                machine.ratio_type = "disabled"
+            elif optimal_ratio == 1.0:
+                machine.optimal_ratio = None
+                machine.ratio_type = "nominal"
+            else:
+                machine.optimal_ratio = optimal_ratio
+                machine.ratio_type = "global"  # Marquer comme ratio d'optimisation globale
+            
+            instances_updated += 1
+    
+    db.commit()
+    
+    return {
+        "message": f"Optimisation globale appliquée avec succès à {instances_updated} machine(s)",
+        "site_id": site_id,
+        "site_name": site.name,
+        "instances_updated": instances_updated
+    }
+
+@router.post("/sites/{site_id}/apply-fine-optimization")
+async def apply_fine_optimization(site_id: int, db: Session = Depends(get_db)):
+    """
+    Applique les ratios optimaux fins calculés aux machines du site
+    """
+    # Vérifier que le site existe
+    site = db.query(models.MiningSite).filter(models.MiningSite.id == site_id).first()
+    if not site:
+        raise HTTPException(status_code=404, detail="Site non trouvé")
+    
+    # Récupérer les machines du site
+    machines = db.query(models.SiteMachineInstance).filter(
+        models.SiteMachineInstance.site_id == site_id
+    ).all()
+    
+    if not machines:
+        raise HTTPException(status_code=400, detail="Aucune machine trouvée dans ce site")
+    
+    instances_updated = 0
+    
+    # Appliquer les ratios optimaux fins
+    for machine in machines:
+        if machine.global_optimal_ratio is not None:
+            optimal_ratio = float(machine.global_optimal_ratio)
+            
+            # Appliquer le ratio optimal fin comme ratio actuel
+            if optimal_ratio == 0.0:
+                machine.optimal_ratio = 0.0
+                machine.ratio_type = "disabled"
+            elif optimal_ratio == 1.0:
+                machine.optimal_ratio = None
+                machine.ratio_type = "nominal"
+            else:
+                machine.optimal_ratio = optimal_ratio
+                machine.ratio_type = "global"  # Marquer comme ratio d'optimisation globale
+            
+            instances_updated += 1
+    
+    db.commit()
+    
+    return {
+        "message": f"Optimisation fine appliquée avec succès à {instances_updated} machine(s)",
+        "site_id": site_id,
+        "site_name": site.name,
+        "instances_updated": instances_updated
+    }

@@ -199,7 +199,7 @@ def find_optimal_adjustment_ratio(
 ):
     """
     Trouve le ratio d'ajustement optimal pour maximiser les profits
-    en testant différents ratios de 0.5 à 1.0
+    en utilisant une approche en deux étapes : globale (0.05) puis fine (0.01)
     """
     # Vérifier que le template existe
     machine = db.query(models.MachineTemplate).filter(
@@ -221,8 +221,164 @@ def find_optimal_adjustment_ratio(
     max_profit = float('-inf')
     results = []
     
+    # ÉTAPE 1: Optimisation globale avec incréments de 0.05
+    print(f"🔍 ÉTAPE 1: Optimisation globale pour machine {machine_id}")
+    global_optimal_ratio = None
+    global_max_profit = float('-inf')
+    
     # Tester des ratios de 0.5 à 1.5 par incréments de 0.05
     for ratio in [round(x * 0.05, 2) for x in range(10, 31)]:  # 0.5 à 1.5
+        try:
+            # Obtenir l'efficacité pour ce ratio
+            result = db.execute(text("""
+                SELECT effective_hashrate, power_consumption 
+                FROM get_machine_efficiency_interpolated(:machine_id, :ratio)
+            """), {"machine_id": machine_id, "ratio": ratio})
+            
+            efficiency = result.fetchone()
+            if efficiency and efficiency[0] is not None:
+                hashrate = float(efficiency[0])
+                power = int(efficiency[1])
+                
+                # Calculer les revenus avec les données du cache
+                daily_revenue = -1
+                sats_per_hour = -1
+                
+                # Utiliser les données FPPS du cache (déjà récupérées)
+                if fpps_rate and fpps_rate != -1:
+                    # FPPS est en BTC/jour par TH/s, convertir en sats/jour par TH/s
+                    fpps_sats_per_day = int(round(float(fpps_rate) * 100000000))
+                    
+                    # Calculer les sats/heure : hashrate (TH/s) × FPPS (sats/jour/TH/s) / 24
+                    sats_per_hour = int(hashrate * fpps_sats_per_day / 24)
+                    
+                    # Convertir en CAD : sats/heure × prix Bitcoin (CAD) / 100000000
+                    if bitcoin_price != -1:
+                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                        daily_revenue = hourly_revenue_cad * 24
+                    
+                    # Stocker les sats/heure pour l'affichage
+                    sats_per_hour = sats_per_hour  # Déjà calculé ci-dessus
+                else:
+                    # Si pas de données FPPS, essayer de récupérer depuis l'API Braiins directement
+                    try:
+                        import requests
+                        
+                        # Récupérer le token depuis la configuration
+                        braiins_token_config = db.query(models.AppConfig).filter(models.AppConfig.key == "braiins_token").first()
+                        
+                        if braiins_token_config and braiins_token_config.value:
+                            # Appel avec le token
+                            fpps_response = requests.get(
+                                "https://pool.braiins.com/stats/json/btc",
+                                headers={"Pool-Auth-Token": braiins_token_config.value},
+                                timeout=3
+                            )
+                        else:
+                            # Appel sans token (données publiques limitées)
+                            fpps_response = requests.get("https://pool.braiins.com/stats/json/btc", timeout=3)
+                        
+                        if fpps_response.status_code == 200:
+                            fpps_data = fpps_response.json()
+                            fpps_rate = fpps_data.get('btc', {}).get('fpps_rate')
+                            
+                            if fpps_rate and fpps_rate != -1:
+                                # FPPS est en BTC/jour par TH/s, convertir en sats/jour par TH/s
+                                fpps_sats_per_day = int(round(float(fpps_rate) * 100000000))
+                                
+                                # Calculer les sats/heure : hashrate (TH/s) × FPPS (sats/jour/TH/s) / 24
+                                sats_per_hour = int(hashrate * fpps_sats_per_day / 24)
+                                
+                                # Convertir en CAD : sats/heure × prix Bitcoin (CAD) / 100000000
+                                if bitcoin_price != -1:
+                                    hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                                    daily_revenue = hourly_revenue_cad * 24
+                                
+                                # Stocker les sats/heure pour l'affichage
+                                sats_per_hour = sats_per_hour  # Déjà calculé ci-dessus
+                    except Exception as e:
+                        # En cas d'erreur, garder les valeurs par défaut
+                        daily_revenue = -1
+                        sats_per_hour = -1
+                
+                # Calculer les coûts d'électricité avec paliers
+                daily_power_kwh = (power * 24) / 1000
+                
+                # Calculer le coût avec les paliers
+                if electricity_tier1_rate == -1 or electricity_tier2_rate == -1 or electricity_tier1_limit == -1:
+                    daily_electricity_cost = -1
+                else:
+                    if daily_power_kwh <= electricity_tier1_limit:
+                        daily_electricity_cost = daily_power_kwh * electricity_tier1_rate
+                    else:
+                        tier1_cost = electricity_tier1_limit * electricity_tier1_rate
+                        tier2_cost = (daily_power_kwh - electricity_tier1_limit) * electricity_tier2_rate
+                        daily_electricity_cost = tier1_cost + tier2_cost
+                
+                # Calculer le profit
+                if daily_revenue == -1 or daily_electricity_cost == -1:
+                    daily_profit = -1
+                else:
+                    daily_profit = daily_revenue - daily_electricity_cost
+                
+                # Calculer l'efficacité technique (TH/s par Watt)
+                efficiency_ratio = hashrate / power if power > 0 else 0
+                
+                result_data = {
+                    "adjustment_ratio": ratio,
+                    "effective_hashrate": hashrate,
+                    "power_consumption": power,
+                    "efficiency_th_per_watt": round(efficiency_ratio, 6),
+                    "efficiency_j_per_th": round(power / hashrate, 2) if hashrate > 0 else 0,
+                    "sats_per_hour": sats_per_hour if 'sats_per_hour' in locals() else -1,
+                    "daily_revenue": round(daily_revenue, 2),
+                    "daily_electricity_cost": round(daily_electricity_cost, 2),
+                    "daily_profit": round(daily_profit, 2)
+                }
+                results.append(result_data)
+                
+                # Mettre à jour l'optimal global si ce ratio est plus profitable
+                if daily_profit > global_max_profit:
+                    global_max_profit = daily_profit
+                    global_optimal_ratio = ratio
+                    
+        except Exception as e:
+            continue
+    
+    # Si aucun ratio optimal global n'a été trouvé, utiliser le ratio avec le meilleur hashrate
+    if global_optimal_ratio is None and results:
+        # Trouver le ratio avec le meilleur hashrate
+        best_hashrate_result = max(results, key=lambda x: x['effective_hashrate'])
+        global_optimal_ratio = best_hashrate_result['adjustment_ratio']
+        global_max_profit = best_hashrate_result.get('daily_profit', -1)
+    
+    # Si toujours aucun résultat, utiliser le ratio par défaut
+    if global_optimal_ratio is None:
+        global_optimal_ratio = 0.85  # Ratio par défaut
+        global_max_profit = -1
+    
+    print(f"📊 Résultat optimisation globale: ratio={global_optimal_ratio}, profit={global_max_profit}")
+    
+    # ÉTAPE 2: Optimisation fine avec incréments de 0.01 autour du meilleur ratio global
+    print(f"🔍 ÉTAPE 2: Optimisation fine pour machine {machine_id}")
+    
+    # Définir la plage fine autour du ratio optimal global (±0.10)
+    fine_range = 0.10
+    fine_step = 0.01
+    
+    # Calculer les bornes de la recherche fine
+    fine_start = max(0.5, global_optimal_ratio - fine_range)
+    fine_end = min(1.5, global_optimal_ratio + fine_range)
+    
+    # Générer les ratios pour la recherche fine
+    fine_ratios = [round(fine_start + i * fine_step, 2) for i in range(int((fine_end - fine_start) / fine_step) + 1)]
+    
+    # Réinitialiser pour la recherche fine
+    optimal_ratio = global_optimal_ratio  # Valeur par défaut
+    max_profit = global_max_profit  # Valeur par défaut
+    
+    # Recherche fine
+    for ratio in fine_ratios:
         try:
             # Obtenir l'efficacité pour ce ratio
             result = db.execute(text("""
@@ -340,17 +496,8 @@ def find_optimal_adjustment_ratio(
         except Exception as e:
             continue
     
-    # Si aucun ratio optimal n'a été trouvé, utiliser le ratio avec le meilleur hashrate
-    if optimal_ratio is None and results:
-        # Trouver le ratio avec le meilleur hashrate
-        best_hashrate_result = max(results, key=lambda x: x['effective_hashrate'])
-        optimal_ratio = best_hashrate_result['adjustment_ratio']
-        max_profit = best_hashrate_result.get('daily_profit', -1)
-    
-    # Si toujours aucun résultat, utiliser le ratio par défaut
-    if optimal_ratio is None:
-        optimal_ratio = 0.85  # Ratio par défaut
-        max_profit = -1
+    print(f"📈 Résultat optimisation fine: ratio={optimal_ratio}, profit={max_profit}")
+    print(f"🎯 Amélioration: {max_profit - global_max_profit:.4f}")
     
     return {
         "machine_id": machine_id,

@@ -11,7 +11,7 @@ let efficiencyData = [];
 const API_BASE = 'http://localhost:8000/api/v1';
 
 // Application Version
-const APP_VERSION = '2.4';
+const APP_VERSION = '4.3';
 
 // Version: 2.0 - Templates System
 // Initialize the application
@@ -366,38 +366,32 @@ function updateSiteSummaryDisplay(summary) {
     const manualRatioBtn = document.getElementById('manualRatioBtn');
     const nominalRatioBtn = document.getElementById('nominalRatioBtn');
     
-    console.log('Boutons trouvés:', {
-        multiOptimal: !!multiOptimalBtn,
-        globalOptimization: !!globalOptimizationBtn,
-        manualRatio: !!manualRatioBtn,
-        nominalRatio: !!nominalRatioBtn
-    });
+    // Supprimer les logs de debug des boutons
     
     const machineCount = summary.machines.length;
-    console.log('Nombre de machines dans le site:', machineCount);
-    console.log('Machines:', summary.machines);
+
     
     if (machineCount === 0) {
-        console.log('Aucune machine - masquage de tous les boutons');
+
         // Masquer tous les boutons s'il n'y a pas de machines
         if (multiOptimalBtn) {
             multiOptimalBtn.style.display = 'none';
-            console.log('Bouton multiOptimal masqué');
+
         }
         if (globalOptimizationBtn) {
             globalOptimizationBtn.style.display = 'none';
-            console.log('Bouton globalOptimization masqué');
+
         }
         if (manualRatioBtn) {
             manualRatioBtn.style.display = 'none';
-            console.log('Bouton manualRatio masqué');
+
         }
         if (nominalRatioBtn) {
             nominalRatioBtn.style.display = 'none';
-            console.log('Bouton nominalRatio masqué');
+
         }
     } else {
-        console.log(`${machineCount} machine(s) - affichage des boutons`);
+
         // Afficher les boutons selon le nombre de machines
         if (multiOptimalBtn) multiOptimalBtn.style.display = 'inline-block';
         if (manualRatioBtn) manualRatioBtn.style.display = 'inline-block';
@@ -424,49 +418,62 @@ function updateSiteSummaryDisplay(summary) {
         return;
     }
     
-    // Remplir le tableau avec les machines
-    summary.machines.forEach(machine => {
-        // Déterminer l'affichage du ratio actuel
-        let currentRatioDisplay = 'N/A';
-        let currentRatioClass = '';
-        
-        if (machine.current_ratio !== null && machine.current_ratio !== undefined) {
-            currentRatioDisplay = machine.current_ratio.toFixed(3);
+            // Remplir le tableau avec les machines
+        summary.machines.forEach(machine => {
+            // Déterminer l'affichage du ratio actuel
+            let currentRatioDisplay = 'N/A';
+            let currentRatioClass = '';
             
-            // Logique d'affichage des icônes multiples
-            let icons = [];
-            
-            // Toujours l'icône nominal si ratio = 1.0
-            if (machine.current_ratio === 1.0) {
-                icons.push('<i class="fas fa-undo text-muted" title="Ratio nominal"></i>');
-                currentRatioClass = 'text-muted';
-            }
-            
-            // Si ratio actuel = ratio optimal calculé → Ajouter icône optimal
-            if (machine.optimal_ratio && Math.abs(machine.current_ratio - machine.optimal_ratio) < 0.01) {
-                icons.push('<i class="fas fa-cog text-info" title="Ratio optimal"></i>');
-                if (machine.current_ratio !== 1.0) {
-                    currentRatioClass = 'text-info';
+            if (machine.current_ratio !== null && machine.current_ratio !== undefined) {
+                currentRatioDisplay = machine.current_ratio.toFixed(3);
+                
+                // Logique d'affichage des icônes multiples
+                let icons = [];
+                
+                // Toujours l'icône nominal si ratio = 1.0
+                if (machine.current_ratio === 1.0) {
+                    icons.push('<i class="fas fa-undo text-muted" title="Ratio nominal"></i>');
+                    currentRatioClass = 'text-muted';
                 }
+                
+                // Si ratio_type = 'global' → Comparer avec ratio_optimal_global
+                if (machine.ratio_type === 'global' && machine.global_optimal_ratio) {
+                    if (Math.abs(machine.current_ratio - machine.global_optimal_ratio) < 0.01) {
+                        icons.push('<i class="fas fa-globe text-success" title="Ratio optimal global"></i>');
+                        currentRatioClass = 'text-success';
+                    } else {
+                        icons.push('<i class="fas fa-exclamation-triangle text-warning" title="Ratio optimal global a changé"></i>');
+                        currentRatioClass = 'text-warning';
+                    }
+                }
+                // Sinon, logique existante pour les autres types
+                else {
+                    // Si ratio actuel = ratio optimal calculé → Ajouter icône optimal
+                    if (machine.optimal_ratio && Math.abs(machine.current_ratio - machine.optimal_ratio) < 0.01) {
+                        icons.push('<i class="fas fa-cog text-info" title="Ratio optimal"></i>');
+                        if (machine.current_ratio !== 1.0) {
+                            currentRatioClass = 'text-info';
+                        }
+                    }
+                    
+                    // Si ratio_type = 'optimal' ET ratio différent → Ajouter icône d'alerte
+                    if (machine.ratio_type === 'optimal' && 
+                        machine.optimal_ratio && 
+                        Math.abs(machine.current_ratio - machine.optimal_ratio) > 0.01) {
+                        icons.push('<i class="fas fa-exclamation-triangle text-warning" title="Ratio optimal a changé"></i>');
+                        currentRatioClass = 'text-warning';
+                    }
+                    
+                    // Si ratio_type = 'manual' et pas d'autres icônes
+                    if (machine.ratio_type === 'manual' && icons.length === 0) {
+                        icons.push('<i class="fas fa-hand-paper text-warning" title="Ratio manuel"></i>');
+                        currentRatioClass = 'text-warning';
+                    }
+                }
+                
+                // Ajouter les icônes au display
+                currentRatioDisplay += ' ' + icons.join(' ');
             }
-            
-            // Si ratio_type = 'optimal' ET ratio différent → Ajouter icône d'alerte
-            if (machine.ratio_type === 'optimal' && 
-                machine.optimal_ratio && 
-                Math.abs(machine.current_ratio - machine.optimal_ratio) > 0.01) {
-                icons.push('<i class="fas fa-exclamation-triangle text-warning" title="Ratio optimal a changé"></i>');
-                currentRatioClass = 'text-warning';
-            }
-            
-            // Si ratio_type = 'manual' et pas d'autres icônes
-            if (machine.ratio_type === 'manual' && icons.length === 0) {
-                icons.push('<i class="fas fa-hand-paper text-warning" title="Ratio manuel"></i>');
-                currentRatioClass = 'text-warning';
-            }
-            
-            // Ajouter les icônes au display
-            currentRatioDisplay += ' ' + icons.join(' ');
-        }
         
         const row = `
             <tr>
@@ -485,6 +492,7 @@ function updateSiteSummaryDisplay(summary) {
                 </td>
                 <td>${machine.efficiency_th_per_watt.toFixed(3)} TH/s/W</td>
                 <td>${machine.optimal_ratio ? machine.optimal_ratio.toFixed(3) : 'N/A'}</td>
+                <td>${machine.global_optimal_ratio ? machine.global_optimal_ratio.toFixed(3) : 'N/A'}</td>
                 <td class="${currentRatioClass}">
                     ${currentRatioDisplay}
                     <button class="btn btn-sm btn-outline-primary ms-2" 
@@ -512,14 +520,16 @@ function updateSiteSummaryDisplay(summary) {
             <td></td>
             <td></td>
             <td></td>
+            <td></td>
         </tr>
         <tr class="table-light">
-            <td colspan="9" class="small text-muted">
+            <td colspan="10" class="small text-muted">
                 <i class="fas fa-info-circle"></i> 
                 Électricité: ${summary.electricity_tier1_rate}$/kWh (premier ${summary.electricity_tier1_limit}kWh), 
                 ${summary.electricity_tier2_rate}$/kWh (reste). 
                 Machines triées par efficacité (TH/s/W). 
                 <i class="fas fa-cog text-info"></i> Ratio optimal, 
+                <i class="fas fa-globe text-success"></i> Ratio optimal global,
                 <i class="fas fa-hand-paper text-warning"></i> Ratio manuel, 
                 <i class="fas fa-undo text-muted"></i> Ratio nominal,
                 <i class="fas fa-exclamation-triangle text-warning"></i> Ratio optimal changé.
@@ -533,6 +543,7 @@ function updateSiteSummaryDisplay(summary) {
 
 // Load Global Site Optimization
 async function loadGlobalOptimization() {
+    
     try {
         if (!currentSiteId) {
             showNotification('Aucun site sélectionné', 'error');
@@ -555,9 +566,6 @@ async function loadGlobalOptimization() {
         
         // Mettre à jour la modal avec les résultats
         updateGlobalOptimizationResults(result);
-        
-        // Recharger la synthèse du site pour refléter les changements
-        await loadSiteSummary(currentSiteId);
         
         showNotification(`Optimisation globale terminée! ${result.combinations_tested} combinaisons testées. Profit optimal: $${result.best_profit.toFixed(2)}/jour`, 'success');
         
@@ -626,10 +634,11 @@ function showGlobalOptimizationLoading() {
 }
 
 function updateGlobalOptimizationResults(result) {
+    
     // Mettre à jour le contenu de la modal existante
     const modalBody = document.querySelector('#globalOptimizationModal .modal-body');
     const modalTitle = document.querySelector('#globalOptimizationModal .modal-title');
-    
+        
     if (!modalBody || !modalTitle) {
         // Si la modal n'existe pas, créer une nouvelle
         showGlobalOptimizationResults(result);
@@ -644,37 +653,51 @@ function updateGlobalOptimizationResults(result) {
         <div class="row">
             <div class="col-md-6">
                 <h6><i class="fas fa-chart-line"></i> Résumé</h6>
-                <ul class="list-group list-group-flush">
-                    <li class="list-group-item d-flex justify-content-between">
-                        <span>Site:</span>
-                        <strong>${result.site_name}</strong>
-                    </li>
-                    <li class="list-group-item d-flex justify-content-between">
-                        <span>Combinaisons testées:</span>
-                        <strong>${result.combinations_tested}</strong>
-                    </li>
-                    <li class="list-group-item d-flex justify-content-between">
-                        <span>Profit optimal:</span>
-                        <strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong>
-                    </li>
-                    <li class="list-group-item d-flex justify-content-between">
-                        <span>Hashrate total:</span>
-                        <strong>${result.results.total_hashrate.toFixed(2)} TH/s</strong>
-                    </li>
-                    <li class="list-group-item d-flex justify-content-between">
-                        <span>Puissance totale:</span>
-                        <strong>${Math.round(result.results.total_power)}W</strong>
-                    </li>
-                </ul>
-            </div>
-            <div class="col-md-6">
-                <h6><i class="fas fa-cogs"></i> Ratios Optimaux</h6>
                 <div class="table-responsive">
                     <table class="table table-sm">
                         <thead>
                             <tr>
+                                <th>Métrique</th>
+                                <th>Valeur</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>Combinaisons testées</td>
+                                <td><strong>${result.combinations_tested}</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Profit optimal</td>
+                                <td><strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Hashrate total</td>
+                                <td><strong>${result.results.total_hashrate.toFixed(2)} TH/s</strong></td>
+                            </tr>
+                            <tr>
+                                <td>Puissance totale</td>
+                                <td><strong>${Math.round(result.results.total_power)}W</strong></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6><i class="fas fa-cogs"></i> Ratios Optimaux (Global)</h6>
+                    <button type="button" class="btn btn-sm btn-primary" onclick="showFineOptimizationConfig(${result.site_id}, ${JSON.stringify(result).replace(/"/g, '&quot;')})">
+                        <i class="fas fa-search-plus"></i> Optimisation Fine
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr class="table-info">
+                                <th colspan="4" class="text-center"><strong>Site: ${result.site_name}</strong></th>
+                            </tr>
+                            <tr>
                                 <th>Machine</th>
-                                <th>Ratio</th>
+                                <th>Ratio Optimal</th>
                                 <th>Hashrate</th>
                                 <th>Puissance</th>
                             </tr>
@@ -691,10 +714,18 @@ function updateGlobalOptimizationResults(result) {
                         </tbody>
                     </table>
                 </div>
+                
+                <div class="row mt-3">
+                    <div class="col-12 text-center">
+                        <button type="button" class="btn btn-success" onclick="applyGlobalOptimization(${result.site_id})">
+                            <i class="fas fa-check"></i> Appliquer l'Optimisation Globale
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
         
-                                <div class="row mt-4">
+        <div class="row mt-4">
                             <div class="col-12">
                                 <h6><i class="fas fa-chart-area"></i> Visualisation 3D des Sweet Spots</h6>
                                 <div class="card">
@@ -731,6 +762,7 @@ function updateGlobalOptimizationResults(result) {
 
 // Show Global Optimization Results
 function showGlobalOptimizationResults(result) {
+        
     // Créer une modal pour afficher les résultats détaillés
     const modalHtml = `
         <div class="modal fade" id="globalOptimizationModal" tabindex="-1">
@@ -754,6 +786,528 @@ function showGlobalOptimizationResults(result) {
                                     <li class="list-group-item d-flex justify-content-between">
                                         <span>Combinaisons testées:</span>
                                         <strong>${result.combinations_tested}</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Profit optimal:</span>
+                                        <strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Hashrate total:</span>
+                                        <strong>${result.results.total_hashrate.toFixed(2)} TH/s</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Puissance totale:</span>
+                                        <strong>${Math.round(result.results.total_power)}W</strong>
+                                    </li>
+                                </ul>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h6><i class="fas fa-cogs"></i> Ratios Optimaux</h6>
+                                    <button type="button" class="btn btn-sm btn-primary" onclick="showFineOptimizationConfig(${result.site_id}, ${JSON.stringify(result).replace(/"/g, '&quot;')})">
+                                        <i class="fas fa-search-plus"></i> Optimisation Fine
+                                    </button>
+                                    
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Machine</th>
+                                                <th>Ratio</th>
+                                                <th>Hashrate</th>
+                                                <th>Puissance</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${result.results.machine_performances.map(machine => `
+                                                <tr>
+                                                    <td>${machine.name}</td>
+                                                    <td><strong>${machine.ratio.toFixed(3)}</strong></td>
+                                                    <td>${machine.hashrate.toFixed(2)} TH/s</td>
+                                                    <td>${Math.round(machine.power)}W</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt-4">
+                            <div class="col-12">
+                                <h6><i class="fas fa-chart-area"></i> Visualisation 3D des Sweet Spots</h6>
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div id="optimization3DChart" style="width: 100%; height: 500px; min-height: 500px;"></div>
+                                    </div>
+                                </div>
+                                <div class="alert alert-info mt-3">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Graphique 3D :</strong> Visualisez les zones de profit optimal en 3D. Les pics représentent les sweet spots.
+                                </div>
+                            </div>
+                        </div>
+                        
+
+                        
+                        <div class="row mt-4">
+                            <div class="col-12 text-center">
+                                <button type="button" class="btn btn-success btn-lg" onclick="applyGlobalOptimization(${result.site_id})">
+                                    <i class="fas fa-check"></i> Appliquer l'Optimisation Globale
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt-4">
+                            <div class="col-12">
+                                <h6><i class="fas fa-download"></i> Export des Données</h6>
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Analyse des sweet spots :</strong> Téléchargez le fichier CSV pour analyser toutes les combinaisons testées et identifier les zones de profit optimal.
+                                </div>
+                                <button class="btn btn-success" onclick="downloadOptimizationCSV(${JSON.stringify(result).replace(/"/g, '&quot;')})">
+                                    <i class="fas fa-download"></i> Télécharger CSV des Résultats
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Supprimer l'ancienne modal si elle existe
+    const existingModal = document.getElementById('globalOptimizationModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Ajouter la nouvelle modal au body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Afficher la modal
+    const modal = new bootstrap.Modal(document.getElementById('globalOptimizationModal'));
+    modal.show();
+
+}
+
+// Show Fine Optimization Configuration Modal
+function showFineOptimizationConfig(siteId, globalResults = null) {
+
+    const modalHtml = `
+        <div class="modal fade" id="fineOptimizationConfigModal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-search-plus"></i> Configuration de l'Optimisation Fine
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle"></i>
+                            <strong>Optimisation Fine :</strong> Cette fonction effectue une optimisation précise autour des sweet spots identifiés par l'optimisation globale.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="fineRange" class="form-label">
+                                <i class="fas fa-expand-arrows-alt"></i> Range d'optimisation (±)
+                            </label>
+                            <select class="form-select" id="fineRange">
+                                <option value="0.05">±0.05 (Très précis)</option>
+                                <option value="0.10" selected>±0.10 (Précis)</option>
+                                <option value="0.15">±0.15 (Large)</option>
+                                <option value="0.20">±0.20 (Très large)</option>
+                            </select>
+                            <div class="form-text">Détermine la zone autour des sweet spots à explorer</div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="fineStep" class="form-label">
+                                <i class="fas fa-ruler"></i> Pas d'optimisation
+                            </label>
+                            <select class="form-select" id="fineStep">
+                                <option value="0.01" selected>0.01 (Très précis)</option>
+                                <option value="0.02">0.02 (Précis)</option>
+                                <option value="0.05">0.05 (Rapide)</option>
+                            </select>
+                            <div class="form-text">Détermine la précision de l'optimisation (plus petit = plus précis mais plus long)</div>
+                        </div>
+                        
+                        <div class="alert alert-warning">
+                            <i class="fas fa-clock"></i>
+                            <strong>Temps estimé :</strong> L'optimisation fine peut prendre 1-3 minutes selon les paramètres choisis.
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                        <button type="button" class="btn btn-primary" onclick="startFineOptimization(${siteId}, ${globalResults ? JSON.stringify(globalResults).replace(/"/g, '&quot;') : 'null'})">
+                            <i class="fas fa-play"></i> Démarrer l'Optimisation Fine
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Supprimer l'ancienne modal si elle existe
+    const existingModal = document.getElementById('fineOptimizationConfigModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Ajouter la nouvelle modal au body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Afficher la modal
+    const modal = new bootstrap.Modal(document.getElementById('fineOptimizationConfigModal'));
+    modal.show();
+}
+
+// Start Fine Optimization
+async function startFineOptimization(siteId, globalResults = null) {
+    // Récupérer les paramètres
+    const fineRange = parseFloat(document.getElementById('fineRange').value);
+    const fineStep = parseFloat(document.getElementById('fineStep').value);
+    
+    // Fermer la modal de configuration
+    const configModal = bootstrap.Modal.getInstance(document.getElementById('fineOptimizationConfigModal'));
+    configModal.hide();
+    
+    // Afficher l'indicateur de chargement
+    showFineOptimizationLoading();
+    
+    try {
+        const requestBody = {
+            fine_range: fineRange,
+            fine_step: fineStep
+        };
+        
+        // Si on a des résultats globaux, les inclure pour l'optimisation rapide
+        if (globalResults) {
+            requestBody.global_results = globalResults;
+        }
+        
+        // Construire l'URL avec les paramètres
+        const url = new URL(`${API_BASE}/sites/${siteId}/fine-optimization`);
+        url.searchParams.set('fine_range', fineRange);
+        url.searchParams.set('fine_step', fineStep);
+        
+        const response = await fetch(url, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const result = await response.json();
+        
+        // Ajouter les résultats globaux au résultat final pour l'affichage
+        if (globalResults) {
+            result.global_results = globalResults;
+        }
+        
+        // Mettre à jour les résultats avec l'optimisation fine
+        updateFineOptimizationResults(result);
+        
+        showNotification('Optimisation fine terminée avec succès !', 'success');
+        
+    } catch (error) {
+        console.error('Erreur lors de l\'optimisation fine:', error);
+        showNotification('Erreur lors de l\'optimisation fine: ' + error.message, 'error');
+        
+        // Fermer la modal de chargement
+        const loadingModal = bootstrap.Modal.getInstance(document.getElementById('fineOptimizationModal'));
+        if (loadingModal) {
+            loadingModal.hide();
+        }
+    }
+}
+
+// Show Fine Optimization Loading Modal
+function showFineOptimizationLoading() {
+    // Créer une modal avec indicateur de chargement
+    const modalHtml = `
+        <div class="modal fade" id="fineOptimizationModal" tabindex="-1">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-search-plus"></i> Optimisation Fine en Cours
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                                <span class="visually-hidden">Chargement...</span>
+                            </div>
+                            <h4 class="mt-3 text-white">Optimisation Fine en cours...</h4>
+                            <p class="text-muted">
+                                <i class="fas fa-cogs"></i> 
+                                Optimisation fine autour des sweet spots. Cela peut prendre quelques secondes.
+                            </p>
+                            <div class="progress mt-3" style="height: 10px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" 
+                                     style="width: 100%" 
+                                     aria-valuenow="100" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Supprimer l'ancienne modal si elle existe
+    const existingModal = document.getElementById('fineOptimizationModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Ajouter la nouvelle modal au body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Afficher la modal
+    const modal = new bootstrap.Modal(document.getElementById('fineOptimizationModal'));
+    modal.show();
+}
+
+// Update Fine Optimization Results
+function updateFineOptimizationResults(result) {
+    // Fermer la modal de loading de l'optimisation fine
+    const loadingModal = bootstrap.Modal.getInstance(document.getElementById('fineOptimizationModal'));
+    if (loadingModal) {
+        loadingModal.hide();
+    }
+    
+    // Mettre à jour le contenu de la modal existante (optimisation globale)
+    const modalBody = document.querySelector('#globalOptimizationModal .modal-body');
+    const modalTitle = document.querySelector('#globalOptimizationModal .modal-title');
+    
+    if (!modalBody || !modalTitle) {
+        // Si la modal n'existe pas, créer une nouvelle
+        showFineOptimizationResults(result);
+        return;
+    }
+    
+    // Mettre à jour le titre
+    modalTitle.innerHTML = '<i class="fas fa-search-plus"></i> Comparaison Optimisation Globale vs Fine';
+    
+    // Mettre à jour le contenu avec les deux graphiques côte à côte
+    modalBody.innerHTML = `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6><i class="fas fa-chart-line"></i> Comparaison des Résultats</h6>
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Métrique</th>
+                                                <th>Global</th>
+                                                <th>Fine</th>
+                                                <th>Amélioration</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td>Combinaisons testées</td>
+                                                <td>${result.global_results?.combinations_tested || 'N/A'}</td>
+                                                <td><strong>${result.combinations_tested}</strong></td>
+                                                <td>${result.global_results ? (result.combinations_tested - result.global_results.combinations_tested) : 'N/A'}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Profit optimal</td>
+                                                <td>${result.global_results ? '$' + result.global_results.best_profit.toFixed(2) + '/jour' : 'N/A'}</td>
+                                                <td><strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong></td>
+                                                <td class="${result.global_results && result.best_profit > result.global_results.best_profit ? 'text-success' : result.global_results && result.best_profit < result.global_results.best_profit ? 'text-danger' : ''}">
+                                                    ${result.global_results ? (result.best_profit > result.global_results.best_profit ? '+' : '') + '$' + (result.best_profit - result.global_results.best_profit).toFixed(2) + '/jour' : 'N/A'}
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>Hashrate total</td>
+                                                <td>${result.global_results ? result.global_results.results.total_hashrate.toFixed(2) + ' TH/s' : 'N/A'}</td>
+                                                <td><strong>${result.results.total_hashrate.toFixed(2)} TH/s</strong></td>
+                                                <td class="${result.global_results && result.results.total_hashrate > result.global_results.results.total_hashrate ? 'text-success' : result.global_results && result.results.total_hashrate < result.global_results.results.total_hashrate ? 'text-danger' : ''}">
+                                                    ${result.global_results ? (result.results.total_hashrate > result.global_results.results.total_hashrate ? '+' : '') + (result.results.total_hashrate - result.global_results.results.total_hashrate).toFixed(2) + ' TH/s' : 'N/A'}
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>Puissance totale</td>
+                                                <td>${result.global_results ? Math.round(result.global_results.results.total_power) + 'W' : 'N/A'}</td>
+                                                <td><strong>${Math.round(result.results.total_power)}W</strong></td>
+                                                <td class="${result.global_results && result.results.total_power < result.global_results.results.total_power ? 'text-success' : result.global_results && result.results.total_power > result.global_results.results.total_power ? 'text-danger' : ''}">
+                                                    ${result.global_results ? (result.results.total_power < result.global_results.results.total_power ? '-' : '+') + Math.abs(result.results.total_power - result.global_results.results.total_power) + 'W' : 'N/A'}
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td>Range utilisé</td>
+                                                <td>N/A</td>
+                                                <td><strong>±${result.fine_range}</strong></td>
+                                                <td>-</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Pas utilisé</td>
+                                                <td>0.05</td>
+                                                <td><strong>${result.fine_step}</strong></td>
+                                                <td class="text-success">+${((0.05 - result.fine_step) / 0.05 * 100).toFixed(0)}% précision</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <h6><i class="fas fa-cogs"></i> Ratios Optimaux (Fine)</h6>
+                                    <button type="button" class="btn btn-sm btn-primary" onclick="showFineOptimizationConfig(${result.site_id}, ${JSON.stringify(result).replace(/"/g, '&quot;')})">
+                                        <i class="fas fa-search-plus"></i> Optimisation Fine
+                                    </button>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr class="table-info">
+                                                <th colspan="4" class="text-center"><strong>Site: ${result.site_name}</strong></th>
+                                            </tr>
+                                            <tr>
+                                                <th>Machine</th>
+                                                <th>Ratio</th>
+                                                <th>Hashrate</th>
+                                                <th>Puissance</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${result.results.machine_performances.map(machine => `
+                                                <tr>
+                                                    <td>${machine.name}</td>
+                                                    <td><strong>${machine.ratio.toFixed(3)}</strong></td>
+                                                    <td>${machine.hashrate.toFixed(2)} TH/s</td>
+                                                    <td>${Math.round(machine.power)}W</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                
+                                <div class="row mt-3">
+                                    <div class="col-12 text-center">
+                                        <button type="button" class="btn btn-success" onclick="applyFineOptimization(${result.site_id})">
+                                            <i class="fas fa-check"></i> Appliquer l'Optimisation Fine
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt-4">
+                            <div class="col-md-6">
+                                <h6><i class="fas fa-chart-area"></i> Optimisation Globale (Grossière)</h6>
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div id="globalOptimization3DChart" style="width: 100%; height: 250px; min-height: 250px;"></div>
+                                    </div>
+                                </div>
+                                <div class="alert alert-info mt-2">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Graphique 3D (Global) :</strong> Visualisation des sweet spots avec optimisation grossière (step 0.05).
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6><i class="fas fa-chart-area"></i> Optimisation Fine (Précise)</h6>
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div id="fineOptimization3DChart" style="width: 100%; height: 250px; min-height: 250px;"></div>
+                                    </div>
+                                </div>
+                                <div class="alert alert-info mt-2">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Graphique 3D (Fine) :</strong> Visualisation des sweet spots avec optimisation fine (step ${result.fine_step}).
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row mt-4">
+                            <div class="col-12">
+                                <h6><i class="fas fa-download"></i> Export des Données</h6>
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Analyse des sweet spots :</strong> Téléchargez le fichier CSV pour analyser toutes les combinaisons testées avec l'optimisation fine.
+                                </div>
+                                <button class="btn btn-success" onclick="downloadFineOptimizationCSV(${JSON.stringify(result).replace(/"/g, '&quot;')})">
+                                    <i class="fas fa-download"></i> Télécharger CSV des Résultats (Fine)
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Créer les deux graphiques 3D
+    setTimeout(() => {
+        // Graphique de l'optimisation fine
+        createFineOptimization3DChart(result);
+        
+        // Graphique de l'optimisation globale (si disponible dans result)
+        if (result.global_results) {
+            createGlobalOptimization3DChart(result.global_results);
+        }
+    }, 100);
+}
+
+// Show Fine Optimization Results
+function showFineOptimizationResults(result) {
+    
+    // Créer une modal pour afficher les résultats détaillés
+    const modalHtml = `
+        <div class="modal fade" id="fineOptimizationModal" tabindex="-1">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-search-plus"></i> Résultats de l'Optimisation Fine
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6><i class="fas fa-chart-line"></i> Résumé de l'Optimisation Fine</h6>
+                                <ul class="list-group list-group-flush">
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Site:</span>
+                                        <strong>${result.site_name}</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Combinaisons grossières:</span>
+                                        <strong>${result.coarse_combinations}</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Combinaisons fines:</span>
+                                        <strong>${result.fine_combinations}</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Total testées:</span>
+                                        <strong>${result.combinations_tested}</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Range utilisé:</span>
+                                        <strong>±${result.fine_range}</strong>
+                                    </li>
+                                    <li class="list-group-item d-flex justify-content-between">
+                                        <span>Pas utilisé:</span>
+                                        <strong>${result.fine_step}</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between">
                                         <span>Profit optimal:</span>
@@ -801,7 +1355,7 @@ function showGlobalOptimizationResults(result) {
                                 <h6><i class="fas fa-chart-area"></i> Visualisation 3D des Sweet Spots</h6>
                                 <div class="card">
                                     <div class="card-body">
-                                        <div id="optimization3DChart" style="width: 100%; height: 500px; min-height: 500px;"></div>
+                                        <div id="fineOptimization3DChart" style="width: 100%; height: 500px; min-height: 500px;"></div>
                                     </div>
                                 </div>
                                 <div class="alert alert-info mt-3">
@@ -811,7 +1365,13 @@ function showGlobalOptimizationResults(result) {
                             </div>
                         </div>
                         
-
+                        <div class="row mt-4">
+                            <div class="col-12 text-center">
+                                <button type="button" class="btn btn-success btn-lg" onclick="applyFineOptimization(${result.site_id})">
+                                    <i class="fas fa-check"></i> Appliquer l'Optimisation Fine
+                                </button>
+                            </div>
+                        </div>
                         
                         <div class="row mt-4">
                             <div class="col-12">
@@ -820,14 +1380,11 @@ function showGlobalOptimizationResults(result) {
                                     <i class="fas fa-info-circle"></i>
                                     <strong>Analyse des sweet spots :</strong> Téléchargez le fichier CSV pour analyser toutes les combinaisons testées et identifier les zones de profit optimal.
                                 </div>
-                                <button class="btn btn-success" onclick="downloadOptimizationCSV(${JSON.stringify(result).replace(/"/g, '&quot;')})">
+                                <button class="btn btn-success" onclick="downloadFineOptimizationCSV(${JSON.stringify(result).replace(/"/g, '&quot;')})">
                                     <i class="fas fa-download"></i> Télécharger CSV des Résultats
                                 </button>
                             </div>
                         </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fermer</button>
                     </div>
                 </div>
             </div>
@@ -835,7 +1392,7 @@ function showGlobalOptimizationResults(result) {
     `;
     
     // Supprimer l'ancienne modal si elle existe
-    const existingModal = document.getElementById('globalOptimizationModal');
+    const existingModal = document.getElementById('fineOptimizationModal');
     if (existingModal) {
         existingModal.remove();
     }
@@ -844,16 +1401,82 @@ function showGlobalOptimizationResults(result) {
     document.body.insertAdjacentHTML('beforeend', modalHtml);
     
     // Afficher la modal
-    const modal = new bootstrap.Modal(document.getElementById('globalOptimizationModal'));
+    const modal = new bootstrap.Modal(document.getElementById('fineOptimizationModal'));
     modal.show();
     
-    // Créer le graphique 3D après que la modal soit affichée
+    // Créer le graphique 3D
     setTimeout(() => {
-        createOptimization3DChart(result);
+        createFineOptimization3DChart(result);
     }, 100);
 }
 
+// Create Fine Optimization 3D Chart
+function createFineOptimization3DChart(result) {
+    const container = document.getElementById('fineOptimization3DChart');
+    if (!container) {
+        console.error('Container fineOptimization3DChart not found');
+        return;
+    }
+    
+    // Utiliser la même logique que l'optimisation globale
+    createOptimization3DChart(result, container);
+}
 
+// Create Global Optimization 3D Chart
+function createGlobalOptimization3DChart(result) {
+    const container = document.getElementById('globalOptimization3DChart');
+    if (!container) {
+        console.error('Container globalOptimization3DChart not found');
+        return;
+    }
+    
+    // Utiliser la même logique que l'optimisation globale
+    createOptimization3DChart(result, container);
+}
+
+// Download Fine Optimization CSV
+function downloadFineOptimizationCSV(result) {
+    // Créer l'en-tête CSV avec les noms des machines
+    const machineNames = result.results.machine_performances.map(m => m.name);
+    const header = ['Combinaison', ...machineNames.map(name => `Ratio_${name}`), 'Profit_Total_$jour', 'Hashrate_Total_THs', 'Puissance_Totale_W', 'Type_Optimisation'];
+    
+    // Générer les données CSV avec les vraies données
+    const csvData = [];
+    
+    // Trier les résultats par profit décroissant pour voir les meilleures combinaisons en premier
+    const sortedResults = result.all_results.sort((a, b) => b.daily_profit - a.daily_profit);
+    
+    // Ajouter TOUTES les combinaisons testées
+    for (let i = 0; i < sortedResults.length; i++) {
+        const combinationResult = sortedResults[i];
+        const isOptimal = combinationResult.daily_profit === result.best_profit;
+        const optimizationType = combinationResult.optimization_type || 'coarse';
+        
+        const row = [
+            isOptimal ? 'OPTIMAL' : `Test_${i + 1}`,
+            ...combinationResult.combination.map(r => r.toFixed(3)),
+            combinationResult.daily_profit.toFixed(4),
+            combinationResult.total_hashrate.toFixed(2),
+            Math.round(combinationResult.total_power),
+            optimizationType
+        ];
+        csvData.push(row);
+    }
+    
+    // Créer le contenu CSV
+    const csvContent = [header, ...csvData].map(row => row.join(',')).join('\n');
+    
+    // Créer et télécharger le fichier
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `optimisation_fine_${result.site_name}_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
 
 // Download optimization results as CSV
 function downloadOptimizationCSV(result) {
@@ -898,10 +1521,9 @@ function downloadOptimizationCSV(result) {
 }
 
 // Create 3D optimization visualization with Plotly
-function createOptimization3DChart(result) {
-    console.log('Creating optimization chart with result:', result);
+function createOptimization3DChart(result, customContainer = null) {
     
-    const container = document.getElementById('optimization3DChart');
+    const container = customContainer || document.getElementById('optimization3DChart');
     if (!container) {
         console.error('Container optimization3DChart not found');
         return;
@@ -917,8 +1539,13 @@ function createOptimization3DChart(result) {
     // Nettoyer le conteneur et s'assurer qu'il a une taille définie
     container.innerHTML = '';
     container.style.width = '100%';
-    container.style.height = '500px';
-    container.style.minHeight = '500px';
+    
+    // Ajuster la hauteur selon le conteneur (250px pour les graphiques côte à côte, 500px pour le graphique unique)
+    const isSmallChart = container.id === 'globalOptimization3DChart' || container.id === 'fineOptimization3DChart';
+    const chartHeight = isSmallChart ? '250px' : '500px';
+    
+    container.style.height = chartHeight;
+    container.style.minHeight = chartHeight;
     container.style.position = 'relative';
     container.style.overflow = 'hidden';
     
@@ -927,7 +1554,7 @@ function createOptimization3DChart(result) {
     
     // Si all_results n'est pas disponible, utiliser les données de results
     if (!data || data.length === 0) {
-        console.log('all_results non disponible, utilisation de results');
+
         data = [{
             combination: result.results.machine_performances.map(m => m.ratio),
             daily_profit: result.results.daily_profit,
@@ -936,14 +1563,11 @@ function createOptimization3DChart(result) {
         }];
     }
     
-    console.log('Structure de result:', Object.keys(result));
-    console.log('all_results existe:', !!result.all_results);
-    console.log('Premier élément de all_results:', result.all_results ? result.all_results[0] : 'undefined');
-    console.log('Data for chart:', data);
+    
     
     // Déterminer le nombre de machines
     const numMachines = data[0] ? data[0].combination.length : 0;
-    console.log('Nombre de machines:', numMachines);
+    
     
     if (numMachines <= 2) {
         // Utiliser le graphique 3D pour 2 machines (1 machine n'a pas de bouton d'optimisation globale)
@@ -955,29 +1579,34 @@ function createOptimization3DChart(result) {
 }
 
 function create3DChart(container, data, result) {
-    console.log('Creating 3D chart for 2 machines');
+    
+    if (!data || data.length === 0) {
+        console.error('Aucune donnée disponible pour le graphique 3D');
+        return;
+    }
+    
+    // Vérifier que les données ont la structure attendue
+    if (!data[0] || !data[0].combination || data[0].combination.length < 2) {
+        console.error('Structure de données invalide pour le graphique 3D');
+        return;
+    }
     
     // Extraire les coordonnées X, Y, Z pour le graphique 3D
     const x = data.map(d => d.combination[0]); // Ratio Machine 1
     const y = data.map(d => d.combination[1]); // Ratio Machine 2
     const z = data.map(d => d.daily_profit);   // Profit
     
-    console.log('Données pour graphique 3D:');
-    console.log('Nombre de points:', data.length);
-    console.log('Ratios X (Machine 1):', x);
-    console.log('Ratios Y (Machine 2):', y);
-    console.log('Profits Z:', z);
-    console.log('Min profit:', Math.min(...z));
-    console.log('Max profit:', Math.max(...z));
-    console.log('Combinaison optimale attendue:', result.best_combination);
-    console.log('Profit optimal:', result.best_profit);
+    
     
     // Vérifier si la combinaison optimale est présente
-    const optimalFound = data.find(d => 
-        Math.abs(d.combination[0] - Object.values(result.best_combination)[0]) < 0.001 &&
-        Math.abs(d.combination[1] - Object.values(result.best_combination)[1]) < 0.001
-    );
-    console.log('Combinaison optimale trouvée dans les données:', optimalFound);
+    let optimalFound = null;
+    if (result.best_combination && Object.values(result.best_combination).length >= 2) {
+        optimalFound = data.find(d => 
+            Math.abs(d.combination[0] - Object.values(result.best_combination)[0]) < 0.001 &&
+            Math.abs(d.combination[1] - Object.values(result.best_combination)[1]) < 0.001
+        );
+    }
+    
     
     // Créer les couleurs basées sur le profit (adaptées au thème sombre)
     const minProfit = Math.min(...z);
@@ -1011,6 +1640,9 @@ function create3DChart(container, data, result) {
 }
 
 function createCommon3DChart(container, x, y, z, colors, texts, result, data, xAxisTitle, yAxisTitle) {
+    // Déterminer si c'est un petit graphique (côte à côte)
+    const isSmallChart = container.id === 'globalOptimization3DChart' || container.id === 'fineOptimization3DChart';
+    
     // Créer le graphique 3D avec Plotly
     const trace = {
         x: x,
@@ -1019,7 +1651,7 @@ function createCommon3DChart(container, x, y, z, colors, texts, result, data, xA
         mode: 'markers',
         type: 'scatter3d',
         marker: {
-            size: 12, // Points plus gros pour mieux les voir
+            size: isSmallChart ? 8 : 12, // Points plus petits pour les graphiques côte à côte
             color: colors,
             opacity: 1.0, // Opacité maximale
             colorscale: 'Viridis',
@@ -1034,8 +1666,8 @@ function createCommon3DChart(container, x, y, z, colors, texts, result, data, xA
     
     const layout = {
         title: {
-            text: `Visualisation 3D des Sweet Spots - Profit Optimal: $${result.best_profit.toFixed(2)}/jour`,
-            font: { size: 16, color: '#ffffff' }
+            text: isSmallChart ? `${xAxisTitle} vs ${yAxisTitle}` : `Visualisation 3D des Sweet Spots - Profit Optimal: $${result.best_profit.toFixed(2)}/jour`,
+            font: { size: isSmallChart ? 12 : 16, color: '#ffffff' }
         },
         paper_bgcolor: '#2d3748',
         plot_bgcolor: '#2d3748',
@@ -1045,24 +1677,24 @@ function createCommon3DChart(container, x, y, z, colors, texts, result, data, xA
                 range: [Math.min(...x), Math.max(...x)],
                 gridcolor: '#4a5568',
                 zerolinecolor: '#4a5568',
-                titlefont: { color: '#ffffff' },
-                tickfont: { color: '#ffffff' }
+                titlefont: { color: '#ffffff', size: isSmallChart ? 10 : 12 },
+                tickfont: { color: '#ffffff', size: isSmallChart ? 8 : 10 }
             },
             yaxis: {
                 title: `Ratio ${yAxisTitle}`,
                 range: [Math.min(...y), Math.max(...y)],
                 gridcolor: '#4a5568',
                 zerolinecolor: '#4a5568',
-                titlefont: { color: '#ffffff' },
-                tickfont: { color: '#ffffff' }
+                titlefont: { color: '#ffffff', size: isSmallChart ? 10 : 12 },
+                tickfont: { color: '#ffffff', size: isSmallChart ? 8 : 10 }
             },
             zaxis: {
                 title: 'Profit ($/jour)',
                 range: [Math.min(...z) * 1.1, Math.max(...z) * 1.1], // Étendre la plage pour utiliser plus d'espace
                 gridcolor: '#4a5568',
                 zerolinecolor: '#4a5568',
-                titlefont: { color: '#ffffff' },
-                tickfont: { color: '#ffffff' }
+                titlefont: { color: '#ffffff', size: isSmallChart ? 10 : 12 },
+                tickfont: { color: '#ffffff', size: isSmallChart ? 8 : 10 }
             },
             camera: {
                 eye: { x: 2.5, y: 2.5, z: 1.8 } // Vue ajustée pour mieux voir les variations
@@ -1071,7 +1703,7 @@ function createCommon3DChart(container, x, y, z, colors, texts, result, data, xA
             aspectratio: { x: 1, y: 1, z: 1.2 } // Augmenter la hauteur relative de l'axe Z
         },
         autosize: true,
-        margin: { l: 50, r: 50, b: 50, t: 50 }
+        margin: { l: isSmallChart ? 30 : 50, r: isSmallChart ? 30 : 50, b: isSmallChart ? 30 : 50, t: isSmallChart ? 30 : 50 }
     };
     
     const config = {
@@ -1090,11 +1722,10 @@ function createCommon3DChart(container, x, y, z, colors, texts, result, data, xA
     
     // Créer le graphique
     try {
-        console.log('Creating Plotly 3D chart with trace:', trace);
-        console.log('Layout:', layout);
+
         
         Plotly.newPlot(container, [trace], layout, config).then(function() {
-            console.log('Plotly 3D chart created successfully');
+
             
             // Ajouter un événement pour identifier le point optimal
             container.on('plotly_click', function(plotData) {
@@ -1106,15 +1737,11 @@ function createCommon3DChart(container, x, y, z, colors, texts, result, data, xA
                 const clickedY = point.y;
                 const clickedZ = point.z;
                 
-                console.log('Point cliqué:', {
-                    ratio1: clickedX,
-                    ratio2: clickedY,
-                    profit: clickedZ
-                });
+
                 
                 // Vérifier si c'est le point optimal
                 if (Math.abs(clickedZ - result.best_profit) < 0.01) {
-                    console.log('Point optimal cliqué!');
+    
                     // Mettre en évidence le point optimal
                     const update = {
                         marker: {
@@ -1140,7 +1767,7 @@ function createCommon3DChart(container, x, y, z, colors, texts, result, data, xA
 }
 
 function create3DChartWithSelector(container, data, result) {
-    console.log('Creating 3D chart with selector for 3+ machines');
+
     
     // Créer l'interface avec sélecteurs
     const numMachines = data[0].combination.length;
@@ -1203,10 +1830,7 @@ function create3DChartWithSelector(container, data, result) {
         const y = data.map(d => d.combination[machineY]);
         const z = data.map(d => d.daily_profit);
         
-        console.log('Données pour graphique 3D avec sélecteur:');
-        console.log('Machine X:', machineNames[machineX], 'Ratios:', x);
-        console.log('Machine Y:', machineNames[machineY], 'Ratios:', y);
-        console.log('Profits Z:', z);
+
         
         // Créer les couleurs basées sur le profit (adaptées au thème sombre)
         const minProfit = Math.min(...z);
@@ -1868,9 +2492,18 @@ async function deleteDataPoint(id) {
     }
 }
 
-// Calculate Optimal Automatically (Economic)
+// Calculate Optimal Automatically (Economic) - Maintenant avec optimisation précise
 async function calculateOptimalAutomatically() {
-    await calculateOptimal('economic');
+    // Si on a un site sélectionné ET qu'on est dans le contexte d'un site, faire l'optimisation précise
+    if (currentSiteId && currentObjectType === 'site') {
+        // Éviter la boucle infinie en ne faisant pas l'optimisation automatique
+        // L'optimisation sera faite manuellement via les boutons
+        console.log('🚫 Optimisation automatique désactivée pour éviter la boucle infinie');
+        return;
+    } else {
+        // Fallback pour les machines individuelles (sans site ou machine sélectionnée)
+        await calculateOptimal('economic');
+    }
 }
 
 // Calculate Optimal (Economic or Technical)
@@ -2208,7 +2841,13 @@ function updateMarketDataDisplay(data) {
     const updateElement = document.getElementById('lastUpdate');
     if (updateElement) {
         const now = new Date();
-        const formattedDate = now.toISOString().slice(0, 19).replace('T', ' ');
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const seconds = String(now.getSeconds()).padStart(2, '0');
+        const formattedDate = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
         updateElement.innerHTML = formattedDate;
     }
     
@@ -2298,38 +2937,27 @@ function openConfiguration() {
 
 async function loadConfiguration() {
     try {
-        console.log('Chargement de la configuration...');
         
         // Charger la configuration depuis l'API
         const response = await fetch(`${API_BASE}/config/app/settings`);
         const data = await response.json();
         
-        console.log('Données reçues:', data);
-        console.log('Settings:', data.settings);
-        
         // Remplir les champs avec les valeurs de la DB (configuration globale)
         if (data.settings.braiins_token) {
-            console.log('Setting braiins_token:', data.settings.braiins_token);
             document.getElementById('braiinsToken').value = data.settings.braiins_token;
         }
         if (data.settings.preferred_currency) {
-            console.log('Setting preferred_currency:', data.settings.preferred_currency);
             document.getElementById('preferredCurrency').value = data.settings.preferred_currency;
         }
         if (data.settings.electricity_tier1_rate) {
-            console.log('Setting electricity_tier1_rate:', data.settings.electricity_tier1_rate);
             document.getElementById('electricityTier1Rate').value = data.settings.electricity_tier1_rate;
         }
         if (data.settings.electricity_tier1_limit) {
-            console.log('Setting electricity_tier1_limit:', data.settings.electricity_tier1_limit);
             document.getElementById('electricityTier1Limit').value = data.settings.electricity_tier1_limit;
         }
         if (data.settings.electricity_tier2_rate) {
-            console.log('Setting electricity_tier2_rate:', data.settings.electricity_tier2_rate);
             document.getElementById('electricityTier2Rate').value = data.settings.electricity_tier2_rate;
         }
-        
-        console.log('Configuration chargée avec succès');
     } catch (error) {
         console.error('Erreur lors du chargement de la configuration:', error);
         showNotification(error.message, 'error');
@@ -2607,15 +3235,12 @@ async function openSiteModal(siteId = null) {
 // Load Site Data
 async function loadSiteData(siteId) {
     try {
-        console.log('Chargement des données du site:', siteId);
-        
         const response = await fetch(`${API_BASE}/sites/${siteId}`);
         if (!response.ok) {
             throw new Error('Failed to load site');
         }
         
         const site = await response.json();
-        console.log('Données du site reçues:', site);
         
         const siteNameField = document.getElementById('siteName');
         const siteAddressField = document.getElementById('siteAddress');
@@ -2625,15 +3250,7 @@ async function loadSiteData(siteId) {
         const siteTier2RateField = document.getElementById('siteModalTier2Rate');
         const siteCurrencyField = document.getElementById('siteCurrency');
         
-        console.log('Champs trouvés:', {
-            siteName: !!siteNameField,
-            siteAddress: !!siteAddressField,
-            siteBraiinsToken: !!siteBraiinsTokenField,
-            siteTier1Rate: !!siteTier1RateField,
-            siteTier1Limit: !!siteTier1LimitField,
-            siteTier2Rate: !!siteTier2RateField,
-            siteCurrency: !!siteCurrencyField
-        });
+
         
         if (siteNameField) siteNameField.value = site.name;
         if (siteAddressField) siteAddressField.value = site.address || '';
@@ -2643,28 +3260,7 @@ async function loadSiteData(siteId) {
         if (siteTier2RateField) siteTier2RateField.value = site.electricity_tier2_rate;
         if (siteCurrencyField) siteCurrencyField.value = site.preferred_currency;
         
-        // Vérifier les valeurs des champs après assignation
-        console.log('Valeurs des champs après assignation:', {
-            siteName: siteNameField?.value,
-            siteAddress: siteAddressField?.value,
-            siteBraiinsToken: siteBraiinsTokenField?.value,
-            siteTier1Rate: siteTier1RateField?.value,
-            siteTier1Limit: siteTier1LimitField?.value,
-            siteTier2Rate: siteTier2RateField?.value,
-            siteCurrency: siteCurrencyField?.value
-        });
-        
-        console.log('Valeurs assignées:', {
-            name: site.name,
-            address: site.address,
-            braiins_token: site.braiins_token,
-            electricity_tier1_rate: site.electricity_tier1_rate,
-            electricity_tier1_limit: site.electricity_tier1_limit,
-            electricity_tier2_rate: site.electricity_tier2_rate,
-            preferred_currency: site.preferred_currency
-        });
-        
-        console.log('Champs remplis avec les valeurs du site');
+
         
     } catch (error) {
         console.error('Error loading site:', error);
@@ -4020,7 +4616,7 @@ async function loadBacktestConfiguration() {
             configurationData = { ...configurationData, ...apiConfig };
         }
     } catch (error) {
-        console.log('Using default configuration');
+
     }
     
     // Load from localStorage as fallback
@@ -4159,8 +4755,9 @@ async function applyOptimalRatios() {
     }
 
     try {
-        showNotification('Optimisation individuelle en cours...', 'info');
+        console.log('🚀 Début de l\'optimisation individuelle...');
         
+        // Utiliser l'ancienne méthode simple pour l'instant
         const response = await fetch(`${API_BASE}/sites/${currentSiteId}/apply-optimal-ratios`, {
             method: 'POST',
             headers: {
@@ -4184,6 +4781,67 @@ async function applyOptimalRatios() {
         console.error('Erreur:', error);
         showNotification('Erreur lors de l\'optimisation individuelle: ' + error.message, 'error');
     }
+}
+
+// Show Individual Optimization Loading
+function showIndividualOptimizationLoading() {
+    // Créer une modal avec indicateur de chargement
+    const modalHtml = `
+        <div class="modal fade" id="individualOptimizationModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-cogs"></i> Optimisation Individuelle Précise en Cours
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="text-center py-4">
+                            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                                <span class="visually-hidden">Chargement...</span>
+                            </div>
+                            <h4 class="mt-3 text-white">Optimisation en cours...</h4>
+                            <p class="text-muted">
+                                <i class="fas fa-search"></i> 
+                                Étape 1: Optimisation globale (brute force)
+                            </p>
+                            <p class="text-muted">
+                                <i class="fas fa-search-plus"></i> 
+                                Étape 2: Optimisation fine (précision 0.01)
+                            </p>
+                            <p class="text-muted">
+                                <i class="fas fa-check"></i> 
+                                Étape 3: Application des résultats optimaux
+                            </p>
+                            <div class="progress mt-3" style="height: 10px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" 
+                                     style="width: 100%" 
+                                     aria-valuenow="100" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Supprimer l'ancienne modal si elle existe
+    const existingModal = document.getElementById('individualOptimizationModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Ajouter la nouvelle modal au body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Afficher la modal
+    const modal = new bootstrap.Modal(document.getElementById('individualOptimizationModal'));
+    modal.show();
 }
 
 async function resetToNominal() {
@@ -4217,6 +4875,80 @@ async function resetToNominal() {
     } catch (error) {
         console.error('Erreur:', error);
         showNotification('Erreur lors de la remise à nominal: ' + error.message, 'error');
+    }
+}
+
+// Apply Global Optimization
+async function applyGlobalOptimization(siteId) {
+    try {
+        showNotification('Application de l\'optimisation globale...', 'info');
+        
+        const response = await fetch(`${API_BASE}/sites/${siteId}/apply-global-optimization`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to apply global optimization');
+        }
+        
+        const result = await response.json();
+        
+        showNotification(result.message, 'success');
+        
+        // Fermer la modal d'optimisation
+        const modal = bootstrap.Modal.getInstance(document.getElementById('globalOptimizationModal'));
+        if (modal) {
+            modal.hide();
+        }
+        
+        // Recharger les données du site
+        await loadSiteSummary(siteId);
+        
+        // Mettre à jour currentSiteId si nécessaire
+        if (!currentSiteId) {
+            currentSiteId = siteId;
+        }
+        
+    } catch (error) {
+        console.error('Error applying global optimization:', error);
+        showNotification('Erreur lors de l\'application de l\'optimisation globale', 'error');
+    }
+}
+
+// Apply Fine Optimization
+async function applyFineOptimization(siteId) {
+    try {
+        showNotification('Application de l\'optimisation fine...', 'info');
+        
+        const response = await fetch(`${API_BASE}/sites/${siteId}/apply-fine-optimization`, {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            throw new Error('Failed to apply fine optimization');
+        }
+        
+        const result = await response.json();
+        
+        showNotification(result.message, 'success');
+        
+        // Fermer la modal d'optimisation (utilise la même modal que l'optimisation globale)
+        const modal = bootstrap.Modal.getInstance(document.getElementById('globalOptimizationModal'));
+        if (modal) {
+            modal.hide();
+        }
+        
+        // Recharger les données du site
+        await loadSiteSummary(siteId);
+        
+        // Mettre à jour currentSiteId si nécessaire
+        if (!currentSiteId) {
+            currentSiteId = siteId;
+        }
+        
+    } catch (error) {
+        console.error('Error applying fine optimization:', error);
+        showNotification('Erreur lors de l\'application de l\'optimisation fine', 'error');
     }
 }
 
