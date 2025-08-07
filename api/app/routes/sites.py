@@ -591,34 +591,41 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
             
             # Utiliser l'API d'efficacité pour obtenir les vraies courbes d'efficacité
             try:
-                # Appeler l'endpoint d'efficacité pour obtenir les données réelles
-                from ..routes.efficiency import get_machine_efficiency_at_ratio
-                efficiency_response = await get_machine_efficiency_at_ratio(template.id, current_ratio, db)
-                
-                if efficiency_response and efficiency_response.get("effective_hashrate") and efficiency_response.get("power_consumption"):
-                    real_hashrate = float(efficiency_response["effective_hashrate"])
-                    real_power = int(efficiency_response["power_consumption"])
-                    real_efficiency = real_hashrate / real_power if real_power > 0 else 0
-                    
-                    # Recalculer les revenus avec le hashrate réel
+                # Si le ratio est 0.0, la machine est désactivée
+                if current_ratio == 0.0:
+                    final_hashrate = 0.0
+                    final_power = 0
+                    final_efficiency = 0.0
                     daily_revenue = 0
-                    if fpps_rate and bitcoin_price != -1:
-                        fpps_sats_per_day = int(float(fpps_rate) * 100000000)
-                        sats_per_hour = int(real_hashrate * fpps_sats_per_day / 24)
-                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
-                        daily_revenue = hourly_revenue_cad * 24
-                    
-                    # Utiliser les données réelles
-                    final_hashrate = real_hashrate
-                    final_power = real_power
-                    final_efficiency = real_efficiency
                 else:
-                    # Pas de données d'efficacité disponibles pour ce ratio
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Données d'efficacité non disponibles pour le ratio {current_ratio} sur la machine {template.model}. "
-                               f"Utilisez l'API /efficiency/machines/{template.id}/ratio-bounds pour voir les ratios disponibles."
-                    )
+                    # Appeler l'endpoint d'efficacité pour obtenir les données réelles
+                    from ..routes.efficiency import get_machine_efficiency_at_ratio
+                    efficiency_response = await get_machine_efficiency_at_ratio(template.id, current_ratio, db)
+                    
+                    if efficiency_response and efficiency_response.get("effective_hashrate") and efficiency_response.get("power_consumption"):
+                        real_hashrate = float(efficiency_response["effective_hashrate"])
+                        real_power = int(efficiency_response["power_consumption"])
+                        real_efficiency = real_hashrate / real_power if real_power > 0 else 0
+                        
+                        # Recalculer les revenus avec le hashrate réel
+                        daily_revenue = 0
+                        if fpps_rate and bitcoin_price != -1:
+                            fpps_sats_per_day = int(float(fpps_rate) * 100000000)
+                            sats_per_hour = int(real_hashrate * fpps_sats_per_day / 24)
+                            hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                            daily_revenue = hourly_revenue_cad * 24
+                        
+                        # Utiliser les données réelles
+                        final_hashrate = real_hashrate
+                        final_power = real_power
+                        final_efficiency = real_efficiency
+                    else:
+                        # Pas de données d'efficacité disponibles pour ce ratio
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Données d'efficacité non disponibles pour le ratio {current_ratio} sur la machine {template.model}. "
+                                   f"Utilisez l'API /efficiency/machines/{template.id}/ratio-bounds pour voir les ratios disponibles."
+                        )
             except HTTPException:
                 raise
             except Exception as e:
@@ -1188,10 +1195,37 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
     # Créer les listes de ratios pour chaque machine
     ratio_lists = [machine_ratios[machine.id] for machine in machines]
     
-    # Générer toutes les combinaisons
+    # Générer toutes les combinaisons normales
     all_combinations = list(product(*ratio_lists))
     
-    print(f"Test de {len(all_combinations)} combinaisons de ratios...")
+    # Ajouter des combinaisons avec machines désactivées (ratio = 0)
+    # Pour chaque sous-ensemble de machines, tester avec les autres désactivées
+    from itertools import combinations
+    
+    additional_combinations = []
+    
+    # Pour chaque nombre de machines à activer (de 1 à toutes les machines)
+    for num_active in range(1, len(machines)):
+        # Pour chaque combinaison de machines actives
+        for active_machines_indices in combinations(range(len(machines)), num_active):
+            # Créer une combinaison où les machines inactives ont ratio = 0
+            combination = [0.0] * len(machines)  # Toutes les machines désactivées par défaut
+            
+            # Pour chaque machine active, générer toutes les combinaisons de ratios possibles
+            active_ratio_lists = [ratio_lists[i] for i in active_machines_indices]
+            active_combinations = list(product(*active_ratio_lists))
+            
+            for active_combination in active_combinations:
+                # Créer la combinaison complète
+                for i, active_idx in enumerate(active_machines_indices):
+                    combination[active_idx] = active_combination[i]
+                
+                additional_combinations.append(tuple(combination))
+    
+    # Combiner toutes les combinaisons
+    all_combinations.extend(additional_combinations)
+    
+    print(f"Test de {len(all_combinations)} combinaisons de ratios (incluant machines désactivées)...")
     
     best_profit = float('-inf')
     best_combination = None
@@ -1213,6 +1247,20 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
                 template = machine_templates[machine.id]
                 ratio = machine_ratio_map[machine.id]
                 
+                # Si le ratio est 0, la machine est désactivée
+                if ratio == 0.0:
+                    machine_performances.append({
+                        "machine_id": machine.id,
+                        "template_id": template.id,
+                        "name": machine.custom_name or template.model,
+                        "ratio": ratio,
+                        "hashrate": 0.0,
+                        "power": 0,
+                        "efficiency": 0.0,
+                        "status": "disabled"
+                    })
+                    continue
+                
                 # Obtenir les données d'efficacité pour ce ratio
                 from ..routes.efficiency import get_machine_efficiency_at_ratio
                 efficiency_response = await get_machine_efficiency_at_ratio(template.id, ratio, db)
@@ -1228,7 +1276,8 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
                         "ratio": ratio,
                         "hashrate": hashrate,
                         "power": power,
-                        "efficiency": hashrate / power if power > 0 else 0
+                        "efficiency": hashrate / power if power > 0 else 0,
+                        "status": "active"
                     })
                     
                     total_hashrate += hashrate
@@ -1315,8 +1364,12 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
     for machine in machines:
         optimal_ratio = best_combination[machine.id]
         
+        # Si le ratio optimal est 0.0, la machine est désactivée
+        if optimal_ratio == 0.0:
+            machine.optimal_ratio = 0.0
+            machine.ratio_type = 'disabled'
         # Si le ratio optimal est 1.0, c'est considéré comme nominal
-        if optimal_ratio == 1.0:
+        elif optimal_ratio == 1.0:
             machine.optimal_ratio = None
             machine.ratio_type = 'nominal'
         else:

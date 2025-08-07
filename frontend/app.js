@@ -539,7 +539,8 @@ async function loadGlobalOptimization() {
             return;
         }
         
-        showNotification('Optimisation globale en cours... (brute force grid search)', 'info');
+        // Afficher immédiatement la modal avec indicateur de chargement
+        showGlobalOptimizationLoading();
         
         // Appeler l'endpoint d'optimisation globale
         const response = await fetch(`${API_BASE}/sites/${currentSiteId}/global-optimization`, {
@@ -552,8 +553,8 @@ async function loadGlobalOptimization() {
         
         const result = await response.json();
         
-        // Afficher les résultats
-        showGlobalOptimizationResults(result);
+        // Mettre à jour la modal avec les résultats
+        updateGlobalOptimizationResults(result);
         
         // Recharger la synthèse du site pour refléter les changements
         await loadSiteSummary(currentSiteId);
@@ -563,7 +564,169 @@ async function loadGlobalOptimization() {
     } catch (error) {
         console.error('Error performing global optimization:', error);
         showNotification('Erreur lors de l\'optimisation globale', 'error');
+        
+        // Fermer la modal en cas d'erreur
+        const modal = bootstrap.Modal.getInstance(document.getElementById('globalOptimizationModal'));
+        if (modal) {
+            modal.hide();
+        }
     }
+}
+
+function showGlobalOptimizationLoading() {
+    // Créer une modal avec indicateur de chargement
+    const modalHtml = `
+        <div class="modal fade" id="globalOptimizationModal" tabindex="-1">
+            <div class="modal-dialog modal-xl">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">
+                            <i class="fas fa-globe"></i> Optimisation Globale en Cours
+                        </h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="text-center py-5">
+                            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                                <span class="visually-hidden">Chargement...</span>
+                            </div>
+                            <h4 class="mt-3 text-white">Optimisation en cours...</h4>
+                            <p class="text-muted">
+                                <i class="fas fa-cogs"></i> 
+                                Brute force grid search en cours. Cela peut prendre quelques secondes selon le nombre de machines.
+                            </p>
+                            <div class="progress mt-3" style="height: 10px;">
+                                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" 
+                                     style="width: 100%" 
+                                     aria-valuenow="100" 
+                                     aria-valuemin="0" 
+                                     aria-valuemax="100">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    // Supprimer l'ancienne modal si elle existe
+    const existingModal = document.getElementById('globalOptimizationModal');
+    if (existingModal) {
+        existingModal.remove();
+    }
+    
+    // Ajouter la nouvelle modal au body
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+    
+    // Afficher la modal
+    const modal = new bootstrap.Modal(document.getElementById('globalOptimizationModal'));
+    modal.show();
+}
+
+function updateGlobalOptimizationResults(result) {
+    // Mettre à jour le contenu de la modal existante
+    const modalBody = document.querySelector('#globalOptimizationModal .modal-body');
+    const modalTitle = document.querySelector('#globalOptimizationModal .modal-title');
+    
+    if (!modalBody || !modalTitle) {
+        // Si la modal n'existe pas, créer une nouvelle
+        showGlobalOptimizationResults(result);
+        return;
+    }
+    
+    // Mettre à jour le titre
+    modalTitle.innerHTML = '<i class="fas fa-globe"></i> Résultats de l\'Optimisation Globale';
+    
+    // Mettre à jour le contenu
+    modalBody.innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <h6><i class="fas fa-chart-line"></i> Résumé</h6>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Site:</span>
+                        <strong>${result.site_name}</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Combinaisons testées:</span>
+                        <strong>${result.combinations_tested}</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Profit optimal:</span>
+                        <strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Hashrate total:</span>
+                        <strong>${result.results.total_hashrate.toFixed(2)} TH/s</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between">
+                        <span>Puissance totale:</span>
+                        <strong>${Math.round(result.results.total_power)}W</strong>
+                    </li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <h6><i class="fas fa-cogs"></i> Ratios Optimaux</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Machine</th>
+                                <th>Ratio</th>
+                                <th>Hashrate</th>
+                                <th>Puissance</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${result.results.machine_performances.map(machine => `
+                                <tr>
+                                    <td>${machine.name}</td>
+                                    <td><strong>${machine.ratio.toFixed(3)}</strong></td>
+                                    <td>${machine.hashrate.toFixed(2)} TH/s</td>
+                                    <td>${Math.round(machine.power)}W</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+                                <div class="row mt-4">
+                            <div class="col-12">
+                                <h6><i class="fas fa-chart-area"></i> Visualisation 3D des Sweet Spots</h6>
+                                <div class="card">
+                                    <div class="card-body">
+                                        <div id="optimization3DChart" style="width: 100%; height: 500px; min-height: 500px;"></div>
+                                    </div>
+                                </div>
+                                <div class="alert alert-info mt-3">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Graphique 3D :</strong> Visualisez les zones de profit optimal en 3D. Les pics représentent les sweet spots.
+                                </div>
+                            </div>
+                        </div>
+        
+        <div class="row mt-4">
+            <div class="col-12">
+                <h6><i class="fas fa-download"></i> Export des Données</h6>
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Analyse des sweet spots :</strong> Téléchargez le fichier CSV pour analyser toutes les combinaisons testées et identifier les zones de profit optimal.
+                </div>
+                <button class="btn btn-success" onclick="downloadOptimizationCSV(${JSON.stringify(result).replace(/"/g, '&quot;')})">
+                    <i class="fas fa-download"></i> Télécharger CSV des Résultats
+                </button>
+            </div>
+        </div>
+    `;
+    
+    // Créer le graphique 3D
+    setTimeout(() => {
+        createOptimization3DChart(result);
+    }, 100);
 }
 
 // Show Global Optimization Results
@@ -636,17 +799,16 @@ function showGlobalOptimizationResults(result) {
                         <div class="row mt-4">
                             <div class="col-12">
                                 <h6><i class="fas fa-chart-area"></i> Visualisation 3D des Sweet Spots</h6>
-                                <div class="alert alert-info">
-                                    <i class="fas fa-info-circle"></i>
-                                    <strong>Graphique 3D :</strong> Visualisez les zones de profit optimal en 3D. Les pics représentent les sweet spots.
-                                </div>
                                 <div class="card">
                                     <div class="card-body">
                                         <div id="optimization3DChart" style="width: 100%; height: 500px; min-height: 500px;"></div>
                                     </div>
                                 </div>
+                                <div class="alert alert-info mt-3">
+                                    <i class="fas fa-info-circle"></i>
+                                    <strong>Graphique 3D :</strong> Visualisez les zones de profit optimal en 3D. Les pics représentent les sweet spots.
+                                </div>
                             </div>
-                        </div>
                         </div>
                         
 
@@ -690,6 +852,8 @@ function showGlobalOptimizationResults(result) {
         createOptimization3DChart(result);
     }, 100);
 }
+
+
 
 // Download optimization results as CSV
 function downloadOptimizationCSV(result) {
@@ -735,7 +899,7 @@ function downloadOptimizationCSV(result) {
 
 // Create 3D optimization visualization with Plotly
 function createOptimization3DChart(result) {
-    console.log('Creating 3D chart with result:', result);
+    console.log('Creating optimization chart with result:', result);
     
     const container = document.getElementById('optimization3DChart');
     if (!container) {
@@ -746,8 +910,7 @@ function createOptimization3DChart(result) {
     // Vérifier si Plotly est disponible
     if (typeof Plotly === 'undefined') {
         console.error('Plotly is not loaded');
-        container.innerHTML = '<div class="alert alert-warning">Plotly n\'est pas chargé. Utilisation du graphique 2D de fallback.</div>';
-        createFallback2DChart(container, result);
+        container.innerHTML = '<div class="alert alert-danger">Plotly n\'est pas chargé. Impossible d\'afficher le graphique 3D.</div>';
         return;
     }
     
@@ -759,7 +922,7 @@ function createOptimization3DChart(result) {
     container.style.position = 'relative';
     container.style.overflow = 'hidden';
     
-    // Préparer les données pour la visualisation 3D
+    // Préparer les données
     let data = result.all_results;
     
     // Si all_results n'est pas disponible, utiliser les données de results
@@ -776,14 +939,28 @@ function createOptimization3DChart(result) {
     console.log('Structure de result:', Object.keys(result));
     console.log('all_results existe:', !!result.all_results);
     console.log('Premier élément de all_results:', result.all_results ? result.all_results[0] : 'undefined');
-    console.log('Data for 3D chart:', data);
+    console.log('Data for chart:', data);
+    
+    // Déterminer le nombre de machines
+    const numMachines = data[0] ? data[0].combination.length : 0;
+    console.log('Nombre de machines:', numMachines);
+    
+    if (numMachines <= 2) {
+        // Utiliser le graphique 3D pour 2 machines (1 machine n'a pas de bouton d'optimisation globale)
+        create3DChart(container, data, result);
+    } else {
+        // Utiliser le graphique 3D avec sélecteur pour 3+ machines
+        create3DChartWithSelector(container, data, result);
+    }
+}
+
+function create3DChart(container, data, result) {
+    console.log('Creating 3D chart for 2 machines');
     
     // Extraire les coordonnées X, Y, Z pour le graphique 3D
     const x = data.map(d => d.combination[0]); // Ratio Machine 1
     const y = data.map(d => d.combination[1]); // Ratio Machine 2
     const z = data.map(d => d.daily_profit);   // Profit
-    const hashrates = data.map(d => d.total_hashrate);
-    const powers = data.map(d => d.total_power);
     
     console.log('Données pour graphique 3D:');
     console.log('Nombre de points:', data.length);
@@ -801,12 +978,6 @@ function createOptimization3DChart(result) {
         Math.abs(d.combination[1] - Object.values(result.best_combination)[1]) < 0.001
     );
     console.log('Combinaison optimale trouvée dans les données:', optimalFound);
-    
-    // Vérifier si les données correspondent au profit optimal
-    const maxProfitInData = Math.max(...z);
-    console.log('Profit max dans les données:', maxProfitInData);
-    console.log('Profit optimal dans result:', result.best_profit);
-    console.log('Correspondance:', Math.abs(maxProfitInData - result.best_profit) < 0.01);
     
     // Créer les couleurs basées sur le profit (adaptées au thème sombre)
     const minProfit = Math.min(...z);
@@ -826,14 +997,20 @@ function createOptimization3DChart(result) {
     });
     
     // Créer les textes pour les tooltips
-    const texts = data.map((d, i) => 
-        `Ratio Machine 1: ${d.combination[0]}<br>` +
-        `Ratio Machine 2: ${d.combination[1]}<br>` +
-        `Profit: $${d.daily_profit.toFixed(2)}/jour<br>` +
-        `Hashrate: ${d.total_hashrate.toFixed(2)} TH/s<br>` +
-        `Puissance: ${d.total_power}W`
-    );
+    const texts = data.map((d, i) => {
+        let tooltip = `Ratio Machine 1: ${d.combination[0]}<br>`;
+        tooltip += `Ratio Machine 2: ${d.combination[1]}<br>`;
+        tooltip += `Profit: $${d.daily_profit.toFixed(2)}/jour<br>` +
+                   `Hashrate: ${d.total_hashrate.toFixed(2)} TH/s<br>` +
+                   `Puissance: ${d.total_power}W`;
+        return tooltip;
+    });
     
+    // Utiliser la fonction commune pour créer le graphique
+    createCommon3DChart(container, x, y, z, colors, texts, result, data, 'Machine 1', 'Machine 2');
+}
+
+function createCommon3DChart(container, x, y, z, colors, texts, result, data, xAxisTitle, yAxisTitle) {
     // Créer le graphique 3D avec Plotly
     const trace = {
         x: x,
@@ -864,7 +1041,7 @@ function createOptimization3DChart(result) {
         plot_bgcolor: '#2d3748',
         scene: {
             xaxis: {
-                title: 'Ratio Machine 1',
+                title: `Ratio ${xAxisTitle}`,
                 range: [Math.min(...x), Math.max(...x)],
                 gridcolor: '#4a5568',
                 zerolinecolor: '#4a5568',
@@ -872,7 +1049,7 @@ function createOptimization3DChart(result) {
                 tickfont: { color: '#ffffff' }
             },
             yaxis: {
-                title: 'Ratio Machine 2',
+                title: `Ratio ${yAxisTitle}`,
                 range: [Math.min(...y), Math.max(...y)],
                 gridcolor: '#4a5568',
                 zerolinecolor: '#4a5568',
@@ -881,20 +1058,20 @@ function createOptimization3DChart(result) {
             },
             zaxis: {
                 title: 'Profit ($/jour)',
-                range: [Math.min(...z) * 1.1, Math.max(...z) * 1.1], // Utiliser la vraie plage des données
+                range: [Math.min(...z) * 1.1, Math.max(...z) * 1.1], // Étendre la plage pour utiliser plus d'espace
                 gridcolor: '#4a5568',
                 zerolinecolor: '#4a5568',
                 titlefont: { color: '#ffffff' },
                 tickfont: { color: '#ffffff' }
             },
             camera: {
-                eye: { x: 2.5, y: 2.5, z: 0.8 } // Vue encore plus large et moins haute
+                eye: { x: 2.5, y: 2.5, z: 1.8 } // Vue ajustée pour mieux voir les variations
             },
             aspectmode: 'manual',
-            aspectratio: { x: 1, y: 1, z: 0.5 } // Forcer un ratio large et moins haut
+            aspectratio: { x: 1, y: 1, z: 1.2 } // Augmenter la hauteur relative de l'axe Z
         },
         autosize: true,
-        margin: { l: 0, r: 0, b: 0, t: 50 }
+        margin: { l: 50, r: 50, b: 50, t: 50 }
     };
     
     const config = {
@@ -913,14 +1090,11 @@ function createOptimization3DChart(result) {
     
     // Créer le graphique
     try {
-        console.log('Creating Plotly chart with trace:', trace);
+        console.log('Creating Plotly 3D chart with trace:', trace);
         console.log('Layout:', layout);
         
-        // Note: Le warning Canvas2D est normal pour Plotly et n'affecte pas les performances
-        // Plotly gère automatiquement l'optimisation du canvas
-        
         Plotly.newPlot(container, [trace], layout, config).then(function() {
-            console.log('Plotly chart created successfully');
+            console.log('Plotly 3D chart created successfully');
             
             // Ajouter un événement pour identifier le point optimal
             container.on('plotly_click', function(plotData) {
@@ -956,100 +1130,128 @@ function createOptimization3DChart(result) {
                 }
             });
         }).catch(function(error) {
-            console.error('Error creating Plotly chart:', error);
+            console.error('Error creating Plotly 3D chart:', error);
             container.innerHTML = '<div class="alert alert-danger">Erreur lors de la création du graphique 3D: ' + error.message + '</div>';
         });
     } catch (error) {
-        console.error('Error in createOptimization3DChart:', error);
+        console.error('Error in createCommon3DChart:', error);
         container.innerHTML = '<div class="alert alert-danger">Erreur lors de la création du graphique 3D: ' + error.message + '</div>';
     }
 }
 
-// Create fallback 2D chart if Plotly is not available
-function createFallback2DChart(container, result) {
-    console.log('Creating fallback 2D chart');
+function create3DChartWithSelector(container, data, result) {
+    console.log('Creating 3D chart with selector for 3+ machines');
     
-    const data = result.all_results;
-    const x = data.map(d => d.combination[0]);
-    const y = data.map(d => d.combination[1]);
-    const z = data.map(d => d.daily_profit);
+    // Créer l'interface avec sélecteurs
+    const numMachines = data[0].combination.length;
+    const machineNames = Array.from({length: numMachines}, (_, i) => `Machine ${i + 1}`);
     
-    const minProfit = Math.min(...z);
-    const maxProfit = Math.max(...z);
+    // Créer une structure avec sélecteurs et conteneur de graphique séparés
+    const selectorHTML = `
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <label for="machineXSelect" class="form-label text-white">Axe X (Ratio):</label>
+                <select id="machineXSelect" class="form-select bg-dark text-white">
+                    ${machineNames.map((name, i) => `<option value="${i}">${name}</option>`).join('')}
+                </select>
+            </div>
+            <div class="col-md-6">
+                <label for="machineYSelect" class="form-label text-white">Axe Y (Ratio):</label>
+                <select id="machineYSelect" class="form-select bg-dark text-white">
+                    ${machineNames.map((name, i) => `<option value="${i}" ${i === 1 ? 'selected' : ''}>${name}</option>`).join('')}
+                </select>
+            </div>
+        </div>
+        <div id="chart3DContainer" style="width: 100%; height: 500px; min-height: 500px; position: relative; overflow: hidden;"></div>
+    `;
     
-    // Créer un graphique 2D simple avec Chart.js
-    const ctx = document.createElement('canvas');
-    ctx.id = 'fallback2DChart';
-    container.appendChild(ctx);
+    // Ajouter la structure complète au conteneur
+    container.innerHTML = selectorHTML;
     
-    const config = {
-        type: 'scatter',
-        data: {
-            datasets: [{
-                label: 'Profit ($/jour)',
-                data: data.map((d, i) => ({
-                    x: d.combination[0],
-                    y: d.combination[1],
-                    r: Math.max(3, Math.min(15, (d.daily_profit - minProfit) / (maxProfit - minProfit) * 12 + 3))
-                })),
-                backgroundColor: data.map(d => {
-                    const normalized = (d.daily_profit - minProfit) / (maxProfit - minProfit);
-                    return `rgba(${255 * (1 - normalized)}, ${255 * normalized}, 0, 0.7)`;
-                }),
-                borderColor: data.map(d => {
-                    const normalized = (d.daily_profit - minProfit) / (maxProfit - minProfit);
-                    return `rgba(${255 * (1 - normalized)}, ${255 * normalized}, 0, 1)`;
-                }),
-                borderWidth: 1
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                title: {
-                    display: true,
-                    text: `Visualisation 2D des Sweet Spots - Profit Optimal: $${result.best_profit.toFixed(2)}/jour`
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const data = result.all_results[context.dataIndex];
-                            return [
-                                `Ratio Machine 1: ${data.combination[0]}`,
-                                `Ratio Machine 2: ${data.combination[1]}`,
-                                `Profit: $${data.daily_profit.toFixed(2)}/jour`,
-                                `Hashrate: ${data.total_hashrate.toFixed(2)} TH/s`,
-                                `Puissance: ${data.total_power}W`
-                            ];
-                        }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    type: 'linear',
-                    position: 'bottom',
-                    title: {
-                        display: true,
-                        text: 'Ratio Machine 1'
-                    }
-                },
-                y: {
-                    type: 'linear',
-                    position: 'left',
-                    title: {
-                        display: true,
-                        text: 'Ratio Machine 2'
-                    }
-                }
+    // Utiliser le conteneur de graphique séparé
+    const chartContainer = document.getElementById('chart3DContainer');
+    const machineXSelect = document.getElementById('machineXSelect');
+    const machineYSelect = document.getElementById('machineYSelect');
+    
+    // Fonction pour ajuster automatiquement la sélection de la deuxième machine
+    function adjustSecondMachineSelection() {
+        const machineX = parseInt(machineXSelect.value);
+        const machineY = parseInt(machineYSelect.value);
+        
+        if (machineX === machineY) {
+            // Trouver la première machine disponible différente
+            let newMachineY = 0;
+            while (newMachineY === machineX && newMachineY < numMachines) {
+                newMachineY++;
             }
+            // Si on a fait le tour, prendre la première machine
+            if (newMachineY >= numMachines) {
+                newMachineY = 0;
+            }
+            
+            machineYSelect.value = newMachineY;
         }
-    };
+    }
     
-    createChart('fallback2DChart', config);
+    // Fonction pour créer le graphique 3D
+    function create3DChart() {
+        const machineX = parseInt(machineXSelect.value);
+        const machineY = parseInt(machineYSelect.value);
+        
+        // Extraire les données pour les deux machines sélectionnées
+        const x = data.map(d => d.combination[machineX]);
+        const y = data.map(d => d.combination[machineY]);
+        const z = data.map(d => d.daily_profit);
+        
+        console.log('Données pour graphique 3D avec sélecteur:');
+        console.log('Machine X:', machineNames[machineX], 'Ratios:', x);
+        console.log('Machine Y:', machineNames[machineY], 'Ratios:', y);
+        console.log('Profits Z:', z);
+        
+        // Créer les couleurs basées sur le profit (adaptées au thème sombre)
+        const minProfit = Math.min(...z);
+        const maxProfit = Math.max(...z);
+        const colors = z.map(profit => {
+            const normalized = (profit - minProfit) / (maxProfit - minProfit);
+            // Utiliser des couleurs plus vives qui ressortent sur fond sombre
+            if (normalized > 0.8) {
+                return '#00ff88'; // Vert vif pour les profits élevés
+            } else if (normalized > 0.6) {
+                return '#ffff00'; // Jaune pour les profits moyens
+            } else if (normalized > 0.4) {
+                return '#ff8800'; // Orange pour les profits faibles
+            } else {
+                return '#ff4444'; // Rouge pour les pertes
+            }
+        });
+        
+        // Créer les textes pour les tooltips
+        const texts = data.map((d, i) => {
+            let tooltip = `Ratio ${machineNames[machineX]}: ${d.combination[machineX]}<br>`;
+            tooltip += `Ratio ${machineNames[machineY]}: ${d.combination[machineY]}<br>`;
+            tooltip += `Profit: $${d.daily_profit.toFixed(2)}/jour<br>`;
+            tooltip += `Hashrate: ${d.total_hashrate.toFixed(2)} TH/s<br>`;
+            tooltip += `Puissance: ${d.total_power}W`;
+            return tooltip;
+        });
+        
+        // Utiliser la fonction commune pour créer le graphique
+        createCommon3DChart(chartContainer, x, y, z, colors, texts, result, data, machineNames[machineX], machineNames[machineY]);
+    }
+    
+    // Ajouter les événements pour les sélecteurs
+    machineXSelect.addEventListener('change', function() {
+        adjustSecondMachineSelection();
+        create3DChart();
+    });
+    machineYSelect.addEventListener('change', function() {
+        adjustSecondMachineSelection();
+        create3DChart();
+    });
+    
+    // Créer le premier graphique
+    create3DChart();
 }
-
 // Update Multi-Optimal Display
 function updateMultiOptimalDisplay(multiOptimal) {
     
