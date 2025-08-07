@@ -438,7 +438,7 @@ function updateSiteSummaryDisplay(summary) {
             
             // Toujours l'icône nominal si ratio = 1.0
             if (machine.current_ratio === 1.0) {
-                icons.push('<i class="fas fa-circle text-muted" title="Ratio nominal"></i>');
+                icons.push('<i class="fas fa-undo text-muted" title="Ratio nominal"></i>');
                 currentRatioClass = 'text-muted';
             }
             
@@ -521,7 +521,7 @@ function updateSiteSummaryDisplay(summary) {
                 Machines triées par efficacité (TH/s/W). 
                 <i class="fas fa-cog text-info"></i> Ratio optimal, 
                 <i class="fas fa-hand-paper text-warning"></i> Ratio manuel, 
-                <i class="fas fa-circle text-muted"></i> Ratio nominal,
+                <i class="fas fa-undo text-muted"></i> Ratio nominal,
                 <i class="fas fa-exclamation-triangle text-warning"></i> Ratio optimal changé.
             </td>
         </tr>
@@ -1292,7 +1292,7 @@ function updateMultiOptimalDisplay(multiOptimal) {
             
             // Toujours l'icône nominal si ratio = 1.0
             if (machine.current_ratio === 1.0) {
-                icons.push('<i class="fas fa-circle text-muted" title="Ratio nominal"></i>');
+                icons.push('<i class="fas fa-undo text-muted" title="Ratio nominal"></i>');
                 currentRatioClass = 'text-muted';
             }
             
@@ -3994,7 +3994,7 @@ function updatePhaseStatus(phaseNumber, status) {
                 statusElement.innerHTML = '<i class="fas fa-lock"></i>';
                 break;
             default:
-                statusElement.innerHTML = '<i class="fas fa-circle"></i>';
+                statusElement.innerHTML = '<i class="fas fa-undo"></i>';
         }
     }
 } 
