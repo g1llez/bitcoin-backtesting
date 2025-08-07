@@ -222,7 +222,6 @@ def find_optimal_adjustment_ratio(
     results = []
     
     # ÉTAPE 1: Optimisation globale avec incréments de 0.05
-    print(f"🔍 ÉTAPE 1: Optimisation globale pour machine {machine_id}")
     global_optimal_ratio = None
     global_max_profit = float('-inf')
     
@@ -357,10 +356,8 @@ def find_optimal_adjustment_ratio(
         global_optimal_ratio = 0.85  # Ratio par défaut
         global_max_profit = -1
     
-    print(f"📊 Résultat optimisation globale: ratio={global_optimal_ratio}, profit={global_max_profit}")
     
     # ÉTAPE 2: Optimisation fine avec incréments de 0.01 autour du meilleur ratio global
-    print(f"🔍 ÉTAPE 2: Optimisation fine pour machine {machine_id}")
     
     # Définir la plage fine autour du ratio optimal global (±0.10)
     fine_range = 0.10
@@ -496,8 +493,6 @@ def find_optimal_adjustment_ratio(
         except Exception as e:
             continue
     
-    print(f"📈 Résultat optimisation fine: ratio={optimal_ratio}, profit={max_profit}")
-    print(f"🎯 Amélioration: {max_profit - global_max_profit:.4f}")
     
     return {
         "machine_id": machine_id,
@@ -885,7 +880,6 @@ def find_optimal_sats_ratio(
                     optimal_ratio = ratio
                 
         except Exception as e:
-            print(f"Erreur lors du calcul pour le ratio {ratio}: {e}")
             continue
     
     if optimal_ratio is None:

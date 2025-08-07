@@ -11,7 +11,7 @@ let efficiencyData = [];
 const API_BASE = 'http://localhost:8000/api/v1';
 
 // Application Version
-const APP_VERSION = '4.3';
+const APP_VERSION = '4.4';
 
 // Version: 2.0 - Templates System
 // Initialize the application
@@ -2498,7 +2498,6 @@ async function calculateOptimalAutomatically() {
     if (currentSiteId && currentObjectType === 'site') {
         // Éviter la boucle infinie en ne faisant pas l'optimisation automatique
         // L'optimisation sera faite manuellement via les boutons
-        console.log('🚫 Optimisation automatique désactivée pour éviter la boucle infinie');
         return;
     } else {
         // Fallback pour les machines individuelles (sans site ou machine sélectionnée)
@@ -4755,7 +4754,6 @@ async function applyOptimalRatios() {
     }
 
     try {
-        console.log('🚀 Début de l\'optimisation individuelle...');
         
         // Utiliser l'ancienne méthode simple pour l'instant
         const response = await fetch(`${API_BASE}/sites/${currentSiteId}/apply-optimal-ratios`, {

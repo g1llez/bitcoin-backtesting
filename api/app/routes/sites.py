@@ -222,7 +222,6 @@ def get_machine_optimal_data(template_id: int, db: Session):
         }
         
     except Exception as e:
-        print(f"Erreur lors du calcul des données optimales: {str(e)}")
         # Fallback aux données nominales
         template = db.query(models.MachineTemplate).filter(
             models.MachineTemplate.id == template_id,
@@ -446,7 +445,6 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
         }
         
     except Exception as e:
-        print(f"Erreur lors du calcul multi-machines: {str(e)}")
         return None
 
 # Route pour calculer le profit d'un site
@@ -921,8 +919,7 @@ async def get_site_available_ratios(site_id: int, db: Session = Depends(get_db))
                     else:
                         common_ratios = common_ratios.intersection(set(valid_ratios))
                         
-            except Exception as e:
-                print(f"Erreur pour machine {template.model}: {e}")
+                                                        except Exception as e:
                 continue
     
     if not available_ratios:
