@@ -47,7 +47,7 @@ Développer une solution de backtesting pour évaluer l'efficacité des machines
 - **Sites** : Gestion des sites de minage
 - **Efficiency** : Courbes d'efficacité et optimisation
 - **Market Data** : Prix Bitcoin et données FPPS
-- **Backtest** : Exécution et résultats de backtesting
+- **Backtest** : Endpoints présents; moteur de calcul et persistance des résultats à finaliser
 - **Configuration** : Paramètres globaux
 
 ### ✅ Interface utilisateur (TERMINÉ)
@@ -55,7 +55,7 @@ Développer une solution de backtesting pour évaluer l'efficacité des machines
 - **Gestion des sites** : CRUD complet
 - **Gestion des machines** : Templates et instances
 - **Courbes d'efficacité** : Visualisation et édition
-- **Optimisation** : Calculs automatiques des ratios optimaux
+- **Optimisation** : Calculs automatiques des ratios optimaux (affichage J/TH au lieu de TH/s/W)
 - **Thèmes** : Dark/Light/Colorful
 - **Responsive** : Mobile et desktop
 
@@ -74,7 +74,7 @@ bitcoin-backtesting/
 │       ├── models/
 │       │   ├── models.py     # ✅ Modèles SQLAlchemy
 │       │   └── schemas.py    # ✅ Schémas Pydantic
-│       ├── routes/           # ✅ Routes API complètes
+│       ├── routes/           # ✅ Routes API complètes (CORS configurable, fallback électricité optionnel)
 │       └── services/         # ✅ Services métier
 ├── frontend/
 │   ├── index.html           # ✅ Interface principale
@@ -126,9 +126,11 @@ bitcoin-backtesting/
    - Calcul du profit net et ROI
 
 2. **Optimisation des algorithmes**
-   - Test de multiples ratios d'ajustement
-   - Identification du ratio optimal
-   - Analyse de sensibilité aux variations de prix
+   - Beam search (largeur configurable) au lieu de combinaisons exhaustives
+   - Limiter aux N meilleurs ratios par machine + raffinement local
+   - Early break avec bornes supérieures de profit
+   - Mémoïsation locale des efficacités (ratio→hashrate/power)
+   - Paramètres de contrôle: max_runtime_s, max_combinations, beam_width, top_ratios_per_machine
 
 3. **Métriques d'analyse avancées**
    - Volatilité des profits
@@ -180,7 +182,8 @@ bitcoin-backtesting/
 - ❓ Dégradation de l'efficacité dans le temps
 
 ### 🔍 Optimisation
-- ✅ Algorithmes d'optimisation des ratios (implémentés)
+- ✅ Algorithmes d'optimisation des ratios (première version)
+- 🔧 Améliorations de performance (beam search, cache, limites de temps/volume)
 - ❓ Contraintes techniques des machines
 - ❓ Fréquence de réévaluation optimale
 
@@ -192,7 +195,7 @@ bitcoin-backtesting/
 - [ ] Intégration complète des données de marché
 
 ### 📊 Techniques
-- [ ] Performance optimale (temps de calcul < 30s)
+- [ ] Performance optimale (temps de calcul < 30s) avec paramètres de contrôle (max_runtime_s, max_combinations)
 - [ ] Fiabilité des données (99.9% uptime)
 - [ ] Scalabilité (support multi-machines)
 
