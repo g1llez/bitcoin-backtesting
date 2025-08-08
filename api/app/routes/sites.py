@@ -240,7 +240,7 @@ def get_machine_optimal_data(template_id: int, db: Session):
         from ..services.market_cache import MarketCacheService
         cache_service = MarketCacheService(db)
         market_data = cache_service.get_market_data()
-        bitcoin_price = market_data["bitcoin_price"] or -1
+        bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
         fpps_rate = market_data["fpps_rate"]
         
         # Récupérer les taux d'électricité
@@ -350,7 +350,7 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
         from ..services.market_cache import MarketCacheService
         cache_service = MarketCacheService(db)
         market_data = cache_service.get_market_data()
-        bitcoin_price = market_data["bitcoin_price"] or -1
+        bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
         fpps_rate = market_data["fpps_rate"]
         
         # Récupérer les données d'électricité avec fallback vers la config globale
@@ -370,8 +370,11 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
             if not template:
                 continue
             
-            # Calculer l'efficacité nominale (TH/s par Watt)
-            efficiency = float(template.hashrate_nominal) / float(template.power_nominal) if template.power_nominal > 0 else 0
+            # Calculer les efficacités nominales
+            nominal_hashrate = float(template.hashrate_nominal)
+            nominal_power = float(template.power_nominal)
+            efficiency_th_per_watt = (nominal_hashrate / nominal_power) if nominal_power > 0 else 0.0
+            efficiency_j_per_th = (nominal_power / nominal_hashrate) if nominal_hashrate > 0 else 0.0
             
             for i in range(instance.quantity):
                 machine_name = f"{instance.custom_name or template.model} #{i+1}"
@@ -381,9 +384,10 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
                     "template_id": template.id,
                     "name": machine_name,
                     "template_model": template.model,
-                    "nominal_hashrate": float(template.hashrate_nominal),
-                    "nominal_power": float(template.power_nominal),
-                    "efficiency": efficiency,
+                    "nominal_hashrate": nominal_hashrate,
+                    "nominal_power": nominal_power,
+                    "efficiency_th_per_watt": efficiency_th_per_watt,
+                    "efficiency_j_per_th": efficiency_j_per_th,
                     "optimal_ratio": None,  # Pas de valeur par défaut
                     "optimal_hashrate": float(template.hashrate_nominal),
                     "optimal_power": float(template.power_nominal),
@@ -392,8 +396,8 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
                     "daily_profit": 0
                 })
         
-        # Étape 2: Trier par efficacité (plus efficaces en premier)
-        machines_data.sort(key=lambda x: x["efficiency"], reverse=True)
+        # Étape 2: Trier par efficacité énergétique (J/TH, plus bas est meilleur)
+        machines_data.sort(key=lambda x: x.get("efficiency_j_per_th", float("inf")))
         
         # Étape 3: Optimiser chaque machine séquentiellement
         remaining_tier1_kwh = electricity_tier1_limit
@@ -469,7 +473,7 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
             
             # Calculer les revenus
             daily_revenue = 0
-            if fpps_rate and bitcoin_price != -1:
+            if fpps_rate is not None and bitcoin_price is not None:
                 fpps_sats_per_day = int(float(fpps_rate) * 100000000)
                 sats_per_hour = int(machine["optimal_hashrate"] * fpps_sats_per_day / 24)
                 hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
@@ -617,7 +621,7 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
         from ..services.market_cache import MarketCacheService
         cache_service = MarketCacheService(db)
         market_data = cache_service.get_market_data()
-        bitcoin_price = market_data["bitcoin_price"] or -1
+        bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
         fpps_rate = market_data["fpps_rate"]
         
         # Récupérer les données d'électricité avec fallback vers la config globale
@@ -682,11 +686,12 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                     if efficiency_response and efficiency_response.get("effective_hashrate") and efficiency_response.get("power_consumption"):
                         real_hashrate = float(efficiency_response["effective_hashrate"])
                         real_power = int(efficiency_response["power_consumption"])
-                        real_efficiency = real_hashrate / real_power if real_power > 0 else 0
+                        real_efficiency_th_per_watt = real_hashrate / real_power if real_power > 0 else 0.0
+                        real_efficiency_j_per_th = real_power / real_hashrate if real_hashrate > 0 else 0.0
                         
                         # Recalculer les revenus avec le hashrate réel
                         daily_revenue = 0
-                        if fpps_rate and bitcoin_price != -1:
+                        if fpps_rate is not None and bitcoin_price is not None:
                             fpps_sats_per_day = int(float(fpps_rate) * 100000000)
                             sats_per_hour = int(real_hashrate * fpps_sats_per_day / 24)
                             hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
@@ -695,7 +700,6 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                         # Utiliser les données réelles
                         final_hashrate = real_hashrate
                         final_power = real_power
-                        final_efficiency = real_efficiency
                     else:
                         # Pas de données d'efficacité disponibles pour ce ratio
                         raise HTTPException(
@@ -725,7 +729,8 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                     "hashrate": final_hashrate,
                     "power": final_power,
                     "daily_revenue": daily_revenue,
-                    "efficiency_th_per_watt": final_efficiency,
+                    "efficiency_th_per_watt": real_efficiency_th_per_watt,
+                    "efficiency_j_per_th": real_efficiency_j_per_th,
                     "optimal_ratio": optimal_ratio,
                     "global_optimal_ratio": float(instance.global_optimal_ratio) if instance.global_optimal_ratio is not None else None,
                     "current_ratio": current_ratio,
@@ -736,8 +741,8 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                 total_power += final_power
                 total_revenue += daily_revenue
         
-        # Trier par efficacité (TH/s par Watt) - les plus efficaces en premier
-        machines_data.sort(key=lambda x: x["efficiency_th_per_watt"], reverse=True)
+        # Trier par efficacité énergétique (J/TH) - plus bas est meilleur
+        machines_data.sort(key=lambda x: x.get("efficiency_j_per_th", float("inf")))
         
         # Calculer les coûts d'électricité avec paliers
         total_cost = 0
@@ -1238,7 +1243,7 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
     from ..services.market_cache import MarketCacheService
     cache_service = MarketCacheService(db)
     market_data = cache_service.get_market_data()
-    bitcoin_price = market_data["bitcoin_price"] or -1
+    bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
     fpps_rate = market_data["fpps_rate"]
     
     # Récupérer les données d'électricité avec fallback vers la config globale
@@ -1377,7 +1382,7 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
             
             # Calculer les revenus totaux
             daily_revenue = 0
-            if fpps_rate and bitcoin_price != -1:
+            if fpps_rate is not None and bitcoin_price is not None:
                 fpps_sats_per_day = int(float(fpps_rate) * 100000000)
                 sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
                 hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
@@ -1494,7 +1499,7 @@ async def fine_site_optimization(
     from ..services.market_cache import MarketCacheService
     cache_service = MarketCacheService(db)
     market_data = cache_service.get_market_data()
-    bitcoin_price = market_data["bitcoin_price"] or -1
+    bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
     fpps_rate = market_data["fpps_rate"]
     
     # Récupérer les données d'électricité avec fallback vers la config globale
@@ -1640,18 +1645,18 @@ async def fine_site_optimization(
             
             # Calculer le profit total
             daily_revenue = 0
-            if common_data.get("fpps_rate") and common_data["fpps_rate"] != -1:
-                fpps_sats_per_day = int(float(common_data["fpps_rate"]) * 100000000)
+            if fpps_rate is not None:
+                fpps_sats_per_day = int(float(fpps_rate) * 100000000)
                 sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
                 
-                if common_data.get("bitcoin_price") and common_data["bitcoin_price"] != -1:
-                    hourly_revenue_cad = sats_per_hour * common_data["bitcoin_price"] / 100000000
+                if bitcoin_price is not None:
+                    hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
                     daily_revenue = hourly_revenue_cad * 24
             
             # Calculer les coûts d'électricité avec paliers
             daily_power_kwh = (total_power * 24) / 1000
             
-            if electricity_tier1_rate == -1 or electricity_tier2_rate == -1 or electricity_tier1_limit == -1:
+            if electricity_tier1_rate is None or electricity_tier2_rate is None or electricity_tier1_limit is None:
                 daily_electricity_cost = 0
             else:
                 if daily_power_kwh <= electricity_tier1_limit:
@@ -1764,18 +1769,18 @@ async def fine_site_optimization(
                 
                 # Calculer le profit total
                 daily_revenue = 0
-                if common_data.get("fpps_rate") and common_data["fpps_rate"] != -1:
-                    fpps_sats_per_day = int(float(common_data["fpps_rate"]) * 100000000)
+                if fpps_rate is not None:
+                    fpps_sats_per_day = int(float(fpps_rate) * 100000000)
                     sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
                     
-                    if common_data.get("bitcoin_price") and common_data["bitcoin_price"] != -1:
-                        hourly_revenue_cad = sats_per_hour * common_data["bitcoin_price"] / 100000000
+                    if bitcoin_price is not None:
+                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
                         daily_revenue = hourly_revenue_cad * 24
                 
                 # Calculer les coûts d'électricité avec paliers
                 daily_power_kwh = (total_power * 24) / 1000
                 
-                if electricity_tier1_rate == -1 or electricity_tier2_rate == -1 or electricity_tier1_limit == -1:
+                if electricity_tier1_rate is None or electricity_tier2_rate is None or electricity_tier1_limit is None:
                     daily_electricity_cost = 0
                 else:
                     if daily_power_kwh <= electricity_tier1_limit:
@@ -1939,18 +1944,16 @@ async def perform_fine_optimization_from_global_results(
                 
                 # Calculer le profit total
                 daily_revenue = 0
-                if common_data.get("fpps_rate") and common_data["fpps_rate"] != -1:
-                    fpps_sats_per_day = int(float(common_data["fpps_rate"]) * 100000000)
+                if fpps_rate is not None:
+                    fpps_sats_per_day = int(float(fpps_rate) * 100000000)
                     sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
-                    
-                    if common_data.get("bitcoin_price") and common_data["bitcoin_price"] != -1:
-                        hourly_revenue_cad = sats_per_hour * common_data["bitcoin_price"] / 100000000
+                    if bitcoin_price is not None:
+                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
                         daily_revenue = hourly_revenue_cad * 24
                 
                 # Calculer les coûts d'électricité avec paliers
                 daily_power_kwh = (total_power * 24) / 1000
-                
-                if electricity_tier1_rate == -1 or electricity_tier2_rate == -1 or electricity_tier1_limit == -1:
+                if electricity_tier1_rate is None or electricity_tier2_rate is None or electricity_tier1_limit is None:
                     daily_electricity_cost = 0
                 else:
                     if daily_power_kwh <= electricity_tier1_limit:

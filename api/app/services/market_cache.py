@@ -112,6 +112,6 @@ class MarketCacheService:
         return {
             "bitcoin_price": bitcoin_price,
             "fpps_rate": fpps_rate,
-            "fpps_sats_per_day": fpps_rate * 100000000 if fpps_rate else None,
-            "fpps_sats": int(round(fpps_rate * 100000000)) if fpps_rate else None
+            "fpps_sats_per_day": (fpps_rate * 100000000) if (fpps_rate is not None) else None,
+            "fpps_sats": (int(round(fpps_rate * 100000000)) if (fpps_rate is not None) else None)
         } 

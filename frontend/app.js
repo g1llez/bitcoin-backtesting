@@ -632,7 +632,7 @@ function updateSiteSummaryDisplay(summary) {
                 <td class="${machine.daily_profit >= 0 ? 'text-success' : 'text-danger'}">
                     $${machine.daily_profit.toFixed(2)}
                 </td>
-                <td>${machine.efficiency_th_per_watt.toFixed(3)} TH/s/W</td>
+                <td>${(machine.efficiency_j_per_th ?? (1 / machine.efficiency_th_per_watt)).toFixed(2)} J/TH</td>
                 <td>${machine.optimal_ratio ? machine.optimal_ratio.toFixed(3) : 'N/A'}</td>
                 <td>${machine.global_optimal_ratio ? machine.global_optimal_ratio.toFixed(3) : 'N/A'}</td>
                 <td class="${currentRatioClass}">
@@ -667,7 +667,7 @@ function updateSiteSummaryDisplay(summary) {
         <tr class="table-light">
             <td colspan="10" class="small text-muted">
                 <i class="fas fa-info-circle"></i> 
-                Machines triées par efficacité (TH/s/W). 
+                Machines triées par efficacité (J/TH, plus bas est meilleur).
                 <i class="fas fa-cog text-info"></i> Ratio optimal, 
                 <i class="fas fa-globe text-success"></i> Ratio optimal global,
                 <i class="fas fa-hand-paper text-warning"></i> Ratio manuel, 
@@ -2085,7 +2085,7 @@ function updateMultiOptimalDisplay(multiOptimal) {
                 <td class="${machine.daily_profit >= 0 ? 'text-success' : 'text-danger'}">
                     $${machine.daily_profit.toFixed(2)}
                 </td>
-                <td>${machine.efficiency.toFixed(3)} TH/s/W</td>
+                <td>${(machine.efficiency_j_per_th ?? (1 / machine.efficiency)).toFixed(2)} J/TH</td>
                 <td>${machine.optimal_ratio.toFixed(3)}</td>
                 <td>${globalOptimalDisplay}</td>
                 <td class="${currentRatioClass}">${currentRatioDisplay}</td>
@@ -2116,7 +2116,7 @@ function updateMultiOptimalDisplay(multiOptimal) {
         <tr class="table-light">
             <td colspan="10" class="small text-muted">
                 <i class="fas fa-info-circle"></i> 
-                Optimisation séquentielle: Machines triées par efficacité (TH/s/W), 
+                Optimisation séquentielle: Machines triées par efficacité (J/TH, plus bas est meilleur), 
                 ratios optimaux calculés individuellement, paliers d'électricité appliqués dans l'ordre d'efficacité.
                 Électricité: 
                 ${electricityData.tier1} (premier ${electricityData.limit}), 
@@ -2228,7 +2228,7 @@ function updateRatioAnalysisChart(data) {
             return [
                 `Hashrate: ${result.hashrate.toFixed(1)} TH/s`,
                 `Puissance: ${result.power}W`,
-                `Efficacité: ${result.efficiency_th_per_watt} TH/s/W`
+                `Efficacité: ${(result.efficiency_j_per_th ?? (result.efficiency_th_per_watt ? (1 / result.efficiency_th_per_watt) : null)) ?? 'N/A'} J/TH`
             ];
         };
         chart.update();
@@ -2737,8 +2737,9 @@ function updateOptimizationResults(data = null, type = 'economic') {
                     document.querySelector('.result-item.cost').style.display = 'flex';
                     document.querySelector('.result-item.sats').style.display = 'flex';
                     
-                    if (optimal.efficiency_th_per_watt) {
-                        const efficiencyValue = `${(optimal.efficiency_th_per_watt * 1000).toFixed(3)} mTH/s/W`;
+                    if (optimal.efficiency_j_per_th || optimal.efficiency_th_per_watt) {
+                        const jPerTh = optimal.efficiency_j_per_th ?? (optimal.efficiency_th_per_watt ? (1 / optimal.efficiency_th_per_watt) : null);
+                        const efficiencyValue = jPerTh !== null ? `${jPerTh.toFixed(2)} J/TH` : 'N/A';
                         const efficiencySpan = document.querySelector('.optimal-efficiency');
                         if (efficiencySpan) {
                             efficiencySpan.textContent = efficiencyValue;
@@ -2746,21 +2747,21 @@ function updateOptimizationResults(data = null, type = 'economic') {
                     }
                     
                     // Afficher les données économiques dans le mode technique aussi
-                    if (optimal.daily_revenue !== undefined && optimal.daily_revenue !== -1) {
+                    if (optimal.daily_revenue !== undefined && optimal.daily_revenue !== null) {
                         document.querySelector('.optimal-revenue').textContent = 
                             `$${parseFloat(optimal.daily_revenue).toFixed(2)}`;
                     } else {
                         document.querySelector('.optimal-revenue').textContent = 
                             `Données indisponibles`;
                     }
-                    if (optimal.daily_electricity_cost !== undefined && optimal.daily_electricity_cost !== -1) {
+                    if (optimal.daily_electricity_cost !== undefined && optimal.daily_electricity_cost !== null) {
                         document.querySelector('.optimal-cost').textContent = 
                             `$${parseFloat(optimal.daily_electricity_cost).toFixed(2)}`;
                     } else {
                         document.querySelector('.optimal-cost').textContent = 
                             `Données indisponibles`;
                     }
-                    if (optimal.daily_profit !== undefined && optimal.daily_profit !== -1) {
+                    if (optimal.daily_profit !== undefined && optimal.daily_profit !== null) {
                         document.querySelector('.optimal-profit').textContent = 
                             `$${parseFloat(optimal.daily_profit).toFixed(2)}`;
                     } else {
@@ -2769,7 +2770,7 @@ function updateOptimizationResults(data = null, type = 'economic') {
                     }
                     
                     // Afficher les sats/heure
-                    if (optimal.sats_per_hour !== undefined && optimal.sats_per_hour !== -1) {
+                    if (optimal.sats_per_hour !== undefined && optimal.sats_per_hour !== null) {
                         document.querySelector('.optimal-sats').textContent = 
                             `${optimal.sats_per_hour.toLocaleString()} sats/h`;
                     } else {
@@ -2785,8 +2786,9 @@ function updateOptimizationResults(data = null, type = 'economic') {
                     document.querySelector('.result-item.sats').style.display = 'flex';
                     
                     // Afficher l'efficacité
-                    if (optimal.efficiency_th_per_watt) {
-                        const efficiencyValue = `${(optimal.efficiency_th_per_watt * 1000).toFixed(3)} mTH/s/W`;
+                    if (optimal.efficiency_j_per_th || optimal.efficiency_th_per_watt) {
+                        const jPerTh = optimal.efficiency_j_per_th ?? (optimal.efficiency_th_per_watt ? (1 / optimal.efficiency_th_per_watt) : null);
+                        const efficiencyValue = jPerTh !== null ? `${jPerTh.toFixed(2)} J/TH` : 'N/A';
                         const efficiencySpan = document.querySelector('.optimal-efficiency');
                         if (efficiencySpan) {
                             efficiencySpan.textContent = efficiencyValue;
@@ -2794,21 +2796,21 @@ function updateOptimizationResults(data = null, type = 'economic') {
                     }
                     
                     // Afficher les données économiques (pour information, même si on maximise les sats)
-                    if (optimal.daily_revenue !== undefined && optimal.daily_revenue !== -1) {
+                    if (optimal.daily_revenue !== undefined && optimal.daily_revenue !== null) {
                         document.querySelector('.optimal-revenue').textContent = 
                             `$${parseFloat(optimal.daily_revenue).toFixed(2)}`;
                     } else {
                         document.querySelector('.optimal-revenue').textContent = 
                             `Données indisponibles`;
                     }
-                    if (optimal.daily_electricity_cost !== undefined && optimal.daily_electricity_cost !== -1) {
+                    if (optimal.daily_electricity_cost !== undefined && optimal.daily_electricity_cost !== null) {
                         document.querySelector('.optimal-cost').textContent = 
                             `$${parseFloat(optimal.daily_electricity_cost).toFixed(2)}`;
                     } else {
                         document.querySelector('.optimal-cost').textContent = 
                             `Données indisponibles`;
                     }
-                    if (optimal.daily_profit !== undefined && optimal.daily_profit !== -1) {
+                    if (optimal.daily_profit !== undefined && optimal.daily_profit !== null) {
                         document.querySelector('.optimal-profit').textContent = 
                             `$${parseFloat(optimal.daily_profit).toFixed(2)}`;
                     } else {
@@ -2817,7 +2819,7 @@ function updateOptimizationResults(data = null, type = 'economic') {
                     }
                     
                     // Afficher les sats/heure (priorité dans ce mode)
-                    if (optimal.sats_per_hour !== undefined && optimal.sats_per_hour !== -1) {
+                    if (optimal.sats_per_hour !== undefined && optimal.sats_per_hour !== null) {
                         document.querySelector('.optimal-sats').textContent = 
                             `${optimal.sats_per_hour.toLocaleString()} sats/h`;
                     } else {
@@ -2832,21 +2834,21 @@ function updateOptimizationResults(data = null, type = 'economic') {
                     document.querySelector('.result-item.cost').style.display = 'flex';
                     document.querySelector('.result-item.sats').style.display = 'flex';
                     
-                    if (optimal.daily_revenue !== undefined && optimal.daily_revenue !== -1) {
+                    if (optimal.daily_revenue !== undefined && optimal.daily_revenue !== null) {
                         document.querySelector('.optimal-revenue').textContent = 
                             `$${parseFloat(optimal.daily_revenue).toFixed(2)}`;
                     } else {
                         document.querySelector('.optimal-revenue').textContent = 
                             `Données indisponibles`;
                     }
-                    if (optimal.daily_electricity_cost !== undefined && optimal.daily_electricity_cost !== -1) {
+                    if (optimal.daily_electricity_cost !== undefined && optimal.daily_electricity_cost !== null) {
                         document.querySelector('.optimal-cost').textContent = 
                             `$${parseFloat(optimal.daily_electricity_cost).toFixed(2)}`;
                     } else {
                         document.querySelector('.optimal-cost').textContent = 
                             `Données indisponibles`;
                     }
-                    if (optimal.daily_profit !== undefined && optimal.daily_profit !== -1) {
+                    if (optimal.daily_profit !== undefined && optimal.daily_profit !== null) {
                         document.querySelector('.optimal-profit').textContent = 
                             `$${parseFloat(optimal.daily_profit).toFixed(2)}`;
                     } else {
@@ -2855,7 +2857,7 @@ function updateOptimizationResults(data = null, type = 'economic') {
                     }
                     
                     // Afficher les sats/heure
-                    if (optimal.sats_per_hour !== undefined && optimal.sats_per_hour !== -1) {
+                    if (optimal.sats_per_hour !== undefined && optimal.sats_per_hour !== null) {
                         document.querySelector('.optimal-sats').textContent = 
                             `${optimal.sats_per_hour.toLocaleString()} sats/h`;
                     } else {
@@ -2864,8 +2866,9 @@ function updateOptimizationResults(data = null, type = 'economic') {
                     }
                     
                     // Afficher l'efficacité dans le mode économique aussi
-                    if (optimal.efficiency_th_per_watt) {
-                        const efficiencyValue = `${(optimal.efficiency_th_per_watt * 1000).toFixed(3)} mTH/s/W`;
+                    if (optimal.efficiency_j_per_th || optimal.efficiency_th_per_watt) {
+                        const jPerTh = optimal.efficiency_j_per_th ?? (optimal.efficiency_th_per_watt ? (1 / optimal.efficiency_th_per_watt) : null);
+                        const efficiencyValue = jPerTh !== null ? `${jPerTh.toFixed(2)} J/TH` : 'N/A';
                         const efficiencySpan = document.querySelector('.optimal-efficiency');
                         if (efficiencySpan) {
                             efficiencySpan.textContent = efficiencyValue;
