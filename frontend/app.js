@@ -4673,26 +4673,33 @@ async function applyOptimalRatios() {
     }
 
     try {
-        
-        // Utiliser l'ancienne méthode simple pour l'instant
-        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/apply-optimal-ratios`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
+        // Si le site a une seule machine, effectuer une optimisation fine
+        let machinesCount = null;
+        try {
+            const stats = await apiClient.get(`/sites/${currentSiteId}/statistics`);
+            machinesCount = stats?.machines_count ?? null;
+        } catch (_) {}
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Erreur lors de l\'optimisation individuelle');
+        if (machinesCount === 1) {
+            showIndividualOptimizationLoading();
+            // Lancer optimisation fine avec paramètres par défaut
+            await apiClient.post(`/sites/${currentSiteId}/fine-optimization?fine_range=0.1&fine_step=0.01`);
+            const data = await apiClient.post(`/sites/${currentSiteId}/apply-fine-optimization`);
+            // Recharger la synthèse du site pour refléter les changements
+            await loadSiteSummary(currentSiteId);
+            showNotification(`Optimisation fine appliquée avec succès à ${data.instances_updated} machine(s)`, 'success');
+            const modal = bootstrap.Modal.getInstance(document.getElementById('individualOptimizationModal'));
+            if (modal) modal.hide();
+            return;
         }
 
-        const data = await response.json();
+        // Sinon, appliquer l'optimisation individuelle standard
+        const data = await apiClient.post(`/sites/${currentSiteId}/apply-optimal-ratios`);
         
         // Recharger la synthèse du site pour refléter les changements
         await loadSiteSummary(currentSiteId);
         
-        showNotification(`Optimisation individuelle appliquée avec succès à ${data.total_machines} machine(s)`, 'success');
+        showNotification(`Optimisation individuelle appliquée avec succès à ${data.total_machines || data.instances_updated || 0} machine(s)`, 'success');
         
     } catch (error) {
         console.error('Erreur:', error);
