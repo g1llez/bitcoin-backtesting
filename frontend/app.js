@@ -75,8 +75,9 @@ function updateVersionIndicator() {
 }
 
 function initializeApp() {
-    initializeChart();
-    initializeRatioAnalysisChart();
+    if (window.charts && typeof window.charts.init === 'function') {
+        window.charts.init();
+    }
     setTheme('dark'); // Default theme
     loadMarketData();
     
@@ -2180,7 +2181,9 @@ async function loadRatioAnalysisChart(machineId) {
         }
         
         // Afficher l'état de chargement
-        showRatioAnalysisLoading();
+        if (window.charts && typeof window.charts.showRatioAnalysisLoading === 'function') {
+            window.charts.showRatioAnalysisLoading();
+        }
         
         const response = await fetch(`${API_BASE}/efficiency/machines/${templateId}/ratio-analysis`);
         
@@ -2189,7 +2192,9 @@ async function loadRatioAnalysisChart(machineId) {
         }
         
         const data = await response.json();
-        updateRatioAnalysisChart(data);
+        if (window.charts && typeof window.charts.updateRatioAnalysisChart === 'function') {
+            window.charts.updateRatioAnalysisChart(data);
+        }
         
     } catch (error) {
         console.error('Error loading ratio analysis:', error);
@@ -2445,7 +2450,11 @@ function initializeChart() {
         }
     };
     
-    efficiencyChart = createChart('efficiencyChart', config);
+    // délégué à charts.js
+    if (window.charts && typeof window.charts.init === 'function') {
+        // charts.init() crée les deux graphiques
+        return;
+    }
 }
 
 // Initialize Ratio Analysis Chart
@@ -2507,7 +2516,10 @@ function initializeRatioAnalysisChart() {
         }
     };
     
-    createChart('ratioAnalysisChart', config);
+    // délégué à charts.js
+    if (window.charts && typeof window.charts.init === 'function') {
+        return;
+    }
 }
 
 // Update Efficiency Chart
@@ -2517,6 +2529,10 @@ function updateEfficiencyChart() {
         y: item.power_consumption
     }));
     
+    if (window.charts && typeof window.charts.updateEfficiencyChartFromData === 'function') {
+        window.charts.updateEfficiencyChartFromData(efficiencyData);
+        return;
+    }
     updateChartData('efficiencyChart', {
         datasets: [{
             label: 'Efficacité',
