@@ -105,7 +105,8 @@ async def root():
         "message": "Bitcoin Backtesting API",
         "version": "1.0.0",
         "status": "running",
-        "docs": "/docs"
+        "docs": "/docs",
+        "metrics": "/metrics"
     }
 
 @app.get("/health")
