@@ -56,6 +56,10 @@ Développer une solution de backtesting pour évaluer l'efficacité des machines
 - **Gestion des machines** : Templates et instances
 - **Courbes d'efficacité** : Visualisation et édition
 - **Optimisation** : Calculs automatiques des ratios optimaux (affichage J/TH au lieu de TH/s/W)
+
+### ✅ Politiques de fallback
+- Électricité: si un site n'a pas de tarifs, complétion implicite depuis la config globale; si des champs restent manquants, coût=0 (pas d'erreur).
+- Efficience: si des données d'efficacité sont manquantes pour un ratio, fallback nominal (hashrate/power du template × ratio) pour éviter les erreurs.
 - **Thèmes** : Dark/Light/Colorful
 - **Responsive** : Mobile et desktop
 
@@ -110,6 +114,13 @@ bitcoin-backtesting/
 - Données FPPS et difficulté réseau
 - Cache automatique des données
 - Import de données manquantes
+ - Exposition des prix CAD et USD; utilisation de la devise du site (`preferred_currency`) dans les calculs et réponses API
+
+### ✅ Observabilité
+- Endpoint Prometheus `/metrics` (métriques requêtes):
+  - `api_requests_total` (méthode/chemin/statut)
+  - `api_request_duration_seconds` (latence)
+  - Compteurs prévus pour les caches (efficiency)
 
 ### ✅ Interface utilisateur avancée
 - Navigation par phases de backtesting
