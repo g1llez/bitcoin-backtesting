@@ -1,4 +1,4 @@
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Histogram, Gauge
 
 REQUEST_COUNT = Counter(
     "api_requests_total",
@@ -23,4 +23,24 @@ EFFICIENCY_CACHE_MISSES = Counter(
     "Cache misses for efficiency lookups",
 )
 
+
+STARTUP_DURATION = Gauge(
+    "api_startup_duration_seconds",
+    "Duration from process start to API readiness (seconds)",
+)
+
+STARTUP_READY_TIMESTAMP = Gauge(
+    "api_startup_ready_timestamp_seconds",
+    "Unix timestamp when the API finished startup and is ready",
+)
+
+DB_BOOTSTRAP_DURATION = Gauge(
+    "api_db_bootstrap_duration_seconds",
+    "Duration to run database startup migrations (seconds)",
+)
+
+MARKET_WARM_DURATION = Gauge(
+    "api_market_warm_duration_seconds",
+    "Duration to warm market data cache during startup (seconds)",
+)
 

@@ -9,14 +9,28 @@ import os
 
 from .database import get_db, engine
 from .services.db_bootstrap import run_startup_migrations
-from .services.metrics import REQUEST_COUNT, REQUEST_LATENCY
+from .services.metrics import (
+    REQUEST_COUNT,
+    REQUEST_LATENCY,
+    STARTUP_DURATION,
+    STARTUP_READY_TIMESTAMP,
+    DB_BOOTSTRAP_DURATION,
+    MARKET_WARM_DURATION,
+)
 from .models import models
 from .routes import machines, efficiency, bitcoin_prices, fpps_data, backtest, market_data, sites, config, machine_templates
 
+_process_start_time = time.perf_counter()
+
 # Création des tables
+_t0 = time.perf_counter()
 models.Base.metadata.create_all(bind=engine)
+_t1 = time.perf_counter()
+
 # Migrations de démarrage (idempotentes)
+_db0 = time.perf_counter()
 run_startup_migrations(engine)
+DB_BOOTSTRAP_DURATION.set(time.perf_counter() - _db0)
 
 app = FastAPI(
     title="Bitcoin Backtesting API",
@@ -32,6 +46,34 @@ def metrics():
     from fastapi import Response
     return Response(content=data, media_type=CONTENT_TYPE_LATEST)
 
+
+# Événements de cycle de vie pour mesurer le temps de démarrage et préchauffer des caches
+@app.on_event("startup")
+async def on_startup():
+    # Optionnel: préchauffer des caches légers pour exposer latence réaliste
+    from .database import SessionLocal
+    from .services.market_cache import MarketCacheService
+
+    market_t0 = time.perf_counter()
+    try:
+        db = SessionLocal()
+        svc = MarketCacheService(db)
+        # Appels best-effort, pas de fallback ni d’erreur bloquante
+        _ = svc.get_cached_bitcoin_price()
+        _ = svc.get_cached_fpps_rate()
+    except Exception:
+        pass
+    finally:
+        try:
+            db.close()
+        except Exception:
+            pass
+    MARKET_WARM_DURATION.set(time.perf_counter() - market_t0)
+
+    # Mesures de démarrage
+    ready_time = time.perf_counter()
+    STARTUP_DURATION.set(ready_time - _process_start_time)
+    STARTUP_READY_TIMESTAMP.set(time.time())
 
 # Configuration CORS (pilotée par variables d'environnement)
 raw_origins = os.getenv("ALLOW_ORIGINS", "http://localhost:3001")
