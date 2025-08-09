@@ -272,12 +272,7 @@ function selectMachine(machineId) {
 async function selectMachineFromSummary(templateId, machineName) {
     try {
         // Récupérer les données du template
-        const response = await fetch(`${API_BASE}/machine-templates/${templateId}`);
-        if (!response.ok) {
-            throw new Error('Failed to load machine template');
-        }
-        
-        const template = await response.json();
+        const template = await apiClient.get(`/machine-templates/${templateId}`);
         
         // Sélectionner la machine avec les données du template
         selectObject('template', templateId, template);
@@ -403,9 +398,8 @@ async function updateSiteInfoDisplay(siteData) {
     let globalTier2Rate = null;
     
     try {
-        const configResponse = await fetch(`${API_BASE}/config/app/settings`);
-        if (configResponse.ok) {
-            const config = await configResponse.json();
+        const config = await apiClient.get(`/config/app/settings`).catch(() => null);
+        if (config && config.settings) {
             globalTier1Rate = parseFloat(config.settings.electricity_tier1_rate);
             globalTier1Limit = parseInt(config.settings.electricity_tier1_limit);
             globalTier2Rate = parseFloat(config.settings.electricity_tier2_rate);
@@ -469,24 +463,17 @@ async function loadSiteSummary(siteId) {
     // Ne rien faire si ce site est marqué supprimé
     if (deletedSiteIds.has(siteId)) return;
     try {
-        const response = await fetch(`${API_BASE}/sites/${siteId}/summary`);
-        if (!response.ok) {
-            if (response.status === 404) {
-                // Site supprimé ou inexistant: masquer proprement la vue
-                const card = document.getElementById('siteSummaryCard');
-                if (card) card.style.display = 'none';
-                return;
-            }
-            throw new Error('Failed to load site summary');
-        }
-        
-        const summary = await response.json();
+        const summary = await apiClient.get(`/sites/${siteId}/summary`);
         updateSiteSummaryDisplay(summary);
         
     } catch (error) {
         console.error('Error loading site summary:', error);
         // Si on arrive ici suite à une suppression, ne pas spammer d'alertes
-        if (String(error).includes('404')) return;
+        if (error && error.status === 404) {
+            const card = document.getElementById('siteSummaryCard');
+            if (card) card.style.display = 'none';
+            return;
+        }
         showNotification('Erreur lors du chargement de la synthèse du site', 'error');
     }
 }
@@ -698,15 +685,7 @@ async function loadGlobalOptimization() {
         showGlobalOptimizationLoading();
         
         // Appeler l'endpoint d'optimisation globale
-        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/global-optimization`, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to perform global optimization');
-        }
-        
-        const result = await response.json();
+        const result = await apiClient.post(`/sites/${currentSiteId}/global-optimization`);
         
         // Mettre à jour la modal avec les résultats
         updateGlobalOptimizationResults(result);
@@ -2569,22 +2548,11 @@ async function saveDataPoint() {
             templateId = currentObjectData?.template_id || currentMachineId;
         }
         
-        const response = await fetch(`${API_BASE}/efficiency/curves`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                machine_id: templateId,
-                effective_hashrate: parseFloat(hashrate),
-                power_consumption: parseInt(power)
-            })
+        await apiClient.post(`/efficiency/curves`, {
+            machine_id: templateId,
+            effective_hashrate: parseFloat(hashrate),
+            power_consumption: parseInt(power)
         });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Erreur lors de l\'ajout');
-        }
         
         // Close modal and reload data
         bootstrap.Modal.getInstance(document.getElementById('addDataModal')).hide();
@@ -2609,13 +2577,7 @@ async function deleteDataPoint(id) {
     }
     
     try {
-        const response = await fetch(`${API_BASE}/efficiency/curves/${id}`, {
-            method: 'DELETE'
-        });
-        
-        if (!response.ok) {
-            throw new Error('Erreur lors de la suppression');
-        }
+        await apiClient.del(`/efficiency/curves/${id}`);
         
         await loadEfficiencyData();
         showNotification('Donnée supprimée avec succès!', 'success');
@@ -2669,13 +2631,7 @@ async function calculateOptimal(type = 'economic') {
         } else {
             endpoint = 'optimal-ratio';
         }
-        const response = await fetch(`${API_BASE}/efficiency/machines/${templateId}/${endpoint}`);
-        
-        if (!response.ok) {
-            throw new Error('Erreur lors du calcul de l\'optimal');
-        }
-        
-        const result = await response.json();
+        const result = await apiClient.get(`/efficiency/machines/${templateId}/${endpoint}`);
         updateOptimizationResults(result, type);
         
         // Afficher l'indicateur de succès
@@ -2923,10 +2879,8 @@ function showNotification(message, type = 'info') {
 // Test API Connection
 async function testAPIConnection() {
     try {
-        const response = await fetch(`${API_BASE}/machines`);
-        if (response.ok) {
-            return true;
-        }
+        await apiClient.get(`/machines`);
+        return true;
     } catch (error) {
         console.error('API connection failed:', error);
         showNotification('Impossible de se connecter à l\'API', 'error');
@@ -2937,12 +2891,7 @@ async function testAPIConnection() {
 // Load Market Data
 async function loadMarketData() {
     try {
-        const response = await fetch(`${API_BASE}/market/current`);
-        if (!response.ok) {
-            throw new Error('Failed to load market data');
-        }
-        
-        const result = await response.json();
+        const result = await apiClient.get(`/market/current`);
         updateMarketDataDisplay(result.data);
         
     } catch (error) {
