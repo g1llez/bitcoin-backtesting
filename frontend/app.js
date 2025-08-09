@@ -2152,13 +2152,7 @@ async function loadRatioAnalysisChart(machineId) {
             window.charts.showRatioAnalysisLoading();
         }
         
-        const response = await fetch(`${API_BASE}/efficiency/machines/${templateId}/ratio-analysis`);
-        
-        if (!response.ok) {
-            throw new Error(`Failed to load ratio analysis: ${response.status}`);
-        }
-        
-        const data = await response.json();
+        const data = await apiClient.get(`/efficiency/machines/${templateId}/ratio-analysis`);
         if (window.charts && typeof window.charts.updateRatioAnalysisChart === 'function') {
             window.charts.updateRatioAnalysisChart(data);
         }
@@ -2299,8 +2293,8 @@ async function loadEfficiencyChart(machineId) {
             templateId = currentObjectData?.template_id || machineId;
         }
         
-        const response = await fetch(`${API_BASE}/efficiency/machines/${templateId}`);
-        if (!response.ok) {
+        const response = await apiClient.get(`/efficiency/machines/${templateId}`).catch(err => ({ __error: err }));
+        if (response && response.__error) {
             // Si pas de données d'efficacité, afficher un message
             efficiencyData = [];
             updateEfficiencyTable();
@@ -2309,7 +2303,7 @@ async function loadEfficiencyChart(machineId) {
             return;
         }
         
-        efficiencyData = await response.json();
+        efficiencyData = response;
         updateEfficiencyTable();
         updateEfficiencyChart();
         
@@ -3085,11 +3079,7 @@ async function testBraiinsToken() {
         showNotification('Test de connexion en cours...', 'info');
         
         // Tester la connexion avec l'API Braiins
-        const response = await fetch(`${API_BASE}/config/test-braiins?token=${encodeURIComponent(token)}`, {
-            method: 'POST'
-        });
-        
-        const result = await response.json();
+        const result = await apiClient.post(`/config/test-braiins?token=${encodeURIComponent(token)}`);
         
         if (result.success) {
             showNotification(`Connexion réussie! FPPS: ${result.fpps_sats} sats`, 'success');
@@ -3111,28 +3101,15 @@ testAPIConnection();
 async function loadSitesAndMachines(autoSelectFirst = true) {
     try {
         // Load sites
-        const sitesResponse = await fetch(`${API_BASE}/sites`);
-        if (!sitesResponse.ok) {
-            throw new Error('Failed to load sites');
-        }
-        const sites = await sitesResponse.json();
+        const sites = await apiClient.get(`/sites`);
         
         // Load machine templates
-        const templatesResponse = await fetch(`${API_BASE}/machine-templates`);
-        if (!templatesResponse.ok) {
-            throw new Error('Failed to load machine templates');
-        }
-        const templates = await templatesResponse.json();
+        const templates = await apiClient.get(`/machine-templates`);
         
         // Load site machine instances for each site
         const siteInstances = {};
         for (const site of sites) {
-            const instancesResponse = await fetch(`${API_BASE}/sites/${site.id}/machine-instances`);
-            if (instancesResponse.ok) {
-                siteInstances[site.id] = await instancesResponse.json();
-            } else {
-                siteInstances[site.id] = [];
-            }
+            siteInstances[site.id] = await apiClient.get(`/sites/${site.id}/machine-instances`).catch(() => []);
         }
         
         updateSitesMachinesTree(sites, templates, siteInstances);
@@ -3287,12 +3264,7 @@ async function openSiteModal(siteId = null) {
 // Load Site Data
 async function loadSiteData(siteId) {
     try {
-        const response = await fetch(`${API_BASE}/sites/${siteId}`);
-        if (!response.ok) {
-            throw new Error('Failed to load site');
-        }
-        
-        const site = await response.json();
+        const site = await apiClient.get(`/sites/${siteId}`);
         
         const siteNameField = document.getElementById('siteName');
         const siteAddressField = document.getElementById('siteAddress');
@@ -3333,35 +3305,15 @@ async function saveSite() {
             preferred_currency: document.getElementById('siteCurrency').value
         };
         
-        const url = currentSiteId 
-            ? `${API_BASE}/sites/${currentSiteId}`
-            : `${API_BASE}/sites`;
-        
-        const method = currentSiteId ? 'PUT' : 'POST';
-        
-        const response = await fetch(url, {
-            method: method,
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(siteData)
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to save site');
-        }
+        const urlPath = currentSiteId ? `/sites/${currentSiteId}` : `/sites`;
+        const saved = currentSiteId
+            ? await apiClient.put(urlPath, siteData)
+            : await apiClient.post(urlPath, siteData);
         
         // Close modal and show success
         bootstrap.Modal.getInstance(document.getElementById('siteModal')).hide();
         showNotification('Site sauvegardé avec succès!', 'success');
 
-        // Récupérer le site sauvegardé (crée ou mis à jour)
-        let saved;
-        try {
-            saved = await response.json();
-        } catch (_) {
-            saved = null;
-        }
         const savedSiteId = saved?.id || currentSiteId;
 
         // Recharger l'arbre sans auto-sélection, puis sélectionner explicitement le site sauvegardé
@@ -3389,13 +3341,7 @@ async function deleteSite(siteId) {
     }
     
     try {
-        const response = await fetch(`${API_BASE}/sites/${siteId}`, {
-            method: 'DELETE'
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to delete site');
-        }
+        await apiClient.del(`/sites/${siteId}`);
         
         showNotification('Site supprimé avec succès!', 'success');
         deletedSiteIds.add(siteId);
@@ -3432,12 +3378,7 @@ async function deleteSite(siteId) {
 // Set Default Values From Global Config
 async function setDefaultValuesFromConfig() {
     try {
-        const response = await fetch(`${API_BASE}/config/app/settings`);
-        if (!response.ok) {
-            throw new Error('Failed to load global config');
-        }
-        
-        const config = await response.json();
+        const config = await apiClient.get(`/config/app/settings`);
         
         // Set default values from global config settings
         if (config.settings) {
@@ -3465,11 +3406,7 @@ async function setDefaultValuesFromConfig() {
 async function addMachineToSite(siteId) {
     try {
         // Load available templates
-        const templatesResponse = await fetch(`${API_BASE}/machine-templates`);
-        if (!templatesResponse.ok) {
-            throw new Error('Failed to load templates');
-        }
-        const templates = await templatesResponse.json();
+        const templates = await apiClient.get(`/machine-templates`);
         
         // Create modal for template selection
         const modalHtml = `
@@ -3553,17 +3490,7 @@ async function saveMachineInstance(siteId) {
             notes: notes || null
         };
         
-        const response = await fetch(`${API_BASE}/sites/${siteId}/machine-instances`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(instanceData)
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to add machine instance');
-        }
+        await apiClient.post(`/sites/${siteId}/machine-instances`, instanceData);
         
         // Close modal
         const modal = bootstrap.Modal.getInstance(document.getElementById('addMachineModal'));
@@ -3584,11 +3511,7 @@ async function saveMachineInstance(siteId) {
 async function editMachineInstance(siteId, instanceId) {
     try {
         // Load instance data
-        const response = await fetch(`${API_BASE}/sites/${siteId}/machine-instances`);
-        if (!response.ok) {
-            throw new Error('Failed to load instance data');
-        }
-        const instances = await response.json();
+        const instances = await apiClient.get(`/sites/${siteId}/machine-instances`);
         const instance = instances.find(i => i.id === instanceId);
         
         if (!instance) {
@@ -3596,11 +3519,7 @@ async function editMachineInstance(siteId, instanceId) {
         }
         
         // Load templates
-        const templatesResponse = await fetch(`${API_BASE}/machine-templates`);
-        if (!templatesResponse.ok) {
-            throw new Error('Failed to load templates');
-        }
-        const templates = await templatesResponse.json();
+        const templates = await apiClient.get(`/machine-templates`);
         const template = templates.find(t => t.id === instance.template_id);
         
         // Create modal for editing
@@ -3674,17 +3593,7 @@ async function updateMachineInstance(siteId, instanceId) {
             notes: notes || null
         };
         
-        const response = await fetch(`${API_BASE}/sites/${siteId}/machine-instances/${instanceId}`, {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(instanceData)
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to update machine instance');
-        }
+        await apiClient.put(`/sites/${siteId}/machine-instances/${instanceId}`, instanceData);
         
         // Close modal
         const modal = bootstrap.Modal.getInstance(document.getElementById('editMachineModal'));
@@ -3708,13 +3617,7 @@ async function removeMachineInstance(siteId, instanceId) {
     }
     
     try {
-        const response = await fetch(`${API_BASE}/sites/${siteId}/machine-instances/${instanceId}`, {
-            method: 'DELETE'
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to remove machine instance');
-        }
+        await apiClient.del(`/sites/${siteId}/machine-instances/${instanceId}`);
         
         // Reload sites and machines
         await loadSitesAndMachines();
@@ -3759,12 +3662,7 @@ function clearTemplateForm() {
 
 async function loadTemplateData(templateId) {
     try {
-        const response = await fetch(`${API_BASE}/machine-templates/${templateId}`);
-        if (!response.ok) {
-            throw new Error('Failed to load template data');
-        }
-        
-        const template = await response.json();
+        const template = await apiClient.get(`/machine-templates/${templateId}`);
         
         document.getElementById('templateModel').value = template.model;
         document.getElementById('templateManufacturer').value = template.manufacturer || '';
@@ -3800,26 +3698,11 @@ async function saveTemplate() {
     };
     
     try {
-        const url = currentTemplateId 
-            ? `${API_BASE}/machine-templates/${currentTemplateId}`
-            : `${API_BASE}/machine-templates`;
-        
-        const method = currentTemplateId ? 'PUT' : 'POST';
-        
-        const response = await fetch(url, {
-            method: method,
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(templateData)
-        });
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail || 'Failed to save template');
+        if (currentTemplateId) {
+            await apiClient.put(`/machine-templates/${currentTemplateId}`, templateData);
+        } else {
+            await apiClient.post(`/machine-templates`, templateData);
         }
-        
-        const template = await response.json();
         showNotification(
             currentTemplateId ? 'Template modifié avec succès' : 'Template créé avec succès', 
             'success'
@@ -3844,13 +3727,7 @@ async function deleteTemplate(templateId) {
     }
     
     try {
-        const response = await fetch(`${API_BASE}/machine-templates/${templateId}`, {
-            method: 'DELETE'
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to delete template');
-        }
+        await apiClient.del(`/machine-templates/${templateId}`);
         
         showNotification('Template supprimé avec succès', 'success');
         loadSitesAndMachines(); // Recharger la liste
@@ -3946,29 +3823,25 @@ async function checkDataAvailability() {
         updatePhaseStatus(1, 'loading');
         
         // Check Bitcoin data
-        const bitcoinResponse = await fetch(`${API_BASE}/bitcoin-prices/count`);
-        const bitcoinCount = await bitcoinResponse.json();
+        const bitcoinCount = await apiClient.get(`/bitcoin-prices/count`);
         statusElements.bitcoin.innerHTML = bitcoinCount > 0 
             ? '<i class="fas fa-check"></i> Disponible' 
             : '<i class="fas fa-times"></i> Manquant';
         
         // Check FPPS data
-        const fppsResponse = await fetch(`${API_BASE}/fpps-data/count`);
-        const fppsCount = await fppsResponse.json();
+        const fppsCount = await apiClient.get(`/fpps-data/count`);
         statusElements.fpps.innerHTML = fppsCount > 0 
             ? '<i class="fas fa-check"></i> Disponible' 
             : '<i class="fas fa-times"></i> Manquant';
         
         // Check sites
-        const sitesResponse = await fetch(`${API_BASE}/sites`);
-        const sites = await sitesResponse.json();
+        const sites = await apiClient.get(`/sites`);
         statusElements.sites.innerHTML = sites.length > 0 
             ? `<i class="fas fa-check"></i> ${sites.length} site(s)` 
             : '<i class="fas fa-times"></i> Aucun site';
         
         // Check machines
-        const machinesResponse = await fetch(`${API_BASE}/machine-templates`);
-        const machines = await machinesResponse.json();
+        const machines = await apiClient.get(`/machine-templates`);
         statusElements.machines.innerHTML = machines.length > 0 
             ? `<i class="fas fa-check"></i> ${machines.length} machine(s)` 
             : '<i class="fas fa-times"></i> Aucune machine';
@@ -4028,8 +3901,7 @@ function initializeBacktestPhase2() {
 // Load sites for backtest selection
 async function loadSitesForBacktest() {
     try {
-        const response = await fetch(`${API_BASE}/sites`);
-        const sites = await response.json();
+        const sites = await apiClient.get(`/sites`);
         
         const sitesSelection = document.getElementById('sitesSelection');
         sitesSelection.innerHTML = '';
@@ -4387,23 +4259,10 @@ async function confirmMachineRatio(instanceId) {
         const modal = bootstrap.Modal.getInstance(document.getElementById('machineRatioSliderModal'));
         modal.hide();
 
-        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/machines/${instanceId}/apply-ratio`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                ratio: ratio,
-                optimization_type: 'economic'
-            })
+        await apiClient.post(`/sites/${currentSiteId}/machines/${instanceId}/apply-ratio`, {
+            ratio,
+            optimization_type: 'economic'
         });
-        
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Failed to apply ratio to machine');
-        }
-        
-        const result = await response.json();
         await loadSiteSummary(currentSiteId);
         showNotification(`Ratio ${(ratio * 100).toFixed(0)}% appliqué avec succès à la machine!`, 'success');
     } catch (error) {
@@ -4423,23 +4282,10 @@ async function confirmManualRatio() {
         const modal = bootstrap.Modal.getInstance(document.getElementById('ratioSliderModal'));
         modal.hide();
         
-        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/apply-manual-ratio`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                ratio: ratio,
-                optimization_type: 'economic'
-            })
+        const result = await apiClient.post(`/sites/${currentSiteId}/apply-manual-ratio`, {
+            ratio,
+            optimization_type: 'economic'
         });
-
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || 'Failed to apply manual ratio');
-        }
-
-        const result = await response.json();
         await loadSiteSummary(currentSiteId);
         showNotification(`Ratio ${(ratio * 100).toFixed(0)}% appliqué avec succès à ${result.total_machines} machine(s)!`, 'success');
     } catch (error) {
