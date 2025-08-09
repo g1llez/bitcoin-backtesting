@@ -9,8 +9,11 @@ let efficiencyData = [];
 // Track sites being or already deleted to avoid stray fetches
 const deletedSiteIds = new Set();
 
-// API Base URL
-const API_BASE = 'http://localhost:8000/api/v1';
+// API Base URL (fourni par index.html via window.API_BASE; aucune valeur par défaut)
+const API_BASE = window.API_BASE;
+if (!API_BASE) {
+    throw new Error('API_BASE non défini. Définissez window.API_BASE dans index.html.');
+}
 
 // Application Version
 const APP_VERSION = '7.0';
