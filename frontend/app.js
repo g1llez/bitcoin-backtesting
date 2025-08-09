@@ -4700,9 +4700,8 @@ let configurationData = {
 async function loadBacktestConfiguration() {
     try {
         // Try to load from API first
-        const response = await fetch(`${API_BASE}/config`);
-        if (response.ok) {
-            const apiConfig = await response.json();
+        const apiConfig = await apiClient.get(`/config`).catch(() => null);
+        if (apiConfig) {
             configurationData = { ...configurationData, ...apiConfig };
         }
     } catch (error) {
@@ -4726,19 +4725,8 @@ async function saveBacktestConfiguration() {
         localStorage.setItem('backtestConfiguration', JSON.stringify(configurationData));
         
         // Try to save to API
-        const response = await fetch(`${API_BASE}/config`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(configurationData)
-        });
-        
-        if (response.ok) {
-            showNotification('Configuration sauvegardée avec succès', 'success');
-        } else {
-            showNotification('Configuration sauvegardée localement', 'info');
-        }
+        await apiClient.post(`/config`, configurationData);
+        showNotification('Configuration sauvegardée avec succès', 'success');
     } catch (error) {
         showNotification('Configuration sauvegardée localement', 'info');
     }
