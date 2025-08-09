@@ -2929,19 +2929,14 @@ function updateMarketDataDisplay(data) {
 // Cache Management Functions
 async function clearMarketCache() {
     try {
-        const result = await apiClient.post(`/market/cache/clear`);
-            showNotification('Cache vidé avec succès! Les données seront rechargées au prochain appel.', 'success');
-            
-            // Recharger les données de marché
-            await loadMarketData();
-            
-            // Recharger le graphique d'analyse des ratios si une machine est sélectionnée
-            if (currentMachineId && (currentObjectType === 'machine' || currentObjectType === 'template')) {
-                const templateId = currentObjectData?.template_id || currentMachineId;
-                loadRatioAnalysisChart(templateId);
-            }
-        } else {
-            throw new Error('Erreur lors du vidage du cache');
+        await apiClient.post(`/market/cache/clear`);
+        showNotification('Cache vidé avec succès! Les données seront rechargées au prochain appel.', 'success');
+        // Recharger les données de marché
+        await loadMarketData();
+        // Recharger le graphique d'analyse des ratios si une machine est sélectionnée
+        if (currentMachineId && (currentObjectType === 'machine' || currentObjectType === 'template')) {
+            const templateId = currentObjectData?.template_id || currentMachineId;
+            loadRatioAnalysisChart(templateId);
         }
     } catch (error) {
         console.error('Error clearing cache:', error);
@@ -2952,20 +2947,19 @@ async function clearMarketCache() {
 async function getCacheStatus() {
     try {
         const result = await apiClient.get(`/market/cache/status`);
-            const statusElement = document.getElementById('cacheStatus');
-            
-            if (result.cache_info && result.cache_info.length > 0) {
-                let statusText = '';
-                result.cache_info.forEach(item => {
-                    const age = item.age_minutes !== null ? `${item.age_minutes.toFixed(1)} min` : 'N/A';
-                    statusText += `${item.key}: ${age} | `;
-                });
-                statusElement.textContent = statusText.slice(0, -3); // Enlever le dernier " | "
-                statusElement.className = 'ms-2 badge bg-info';
-            } else {
-                statusElement.textContent = 'Cache vide';
-                statusElement.className = 'ms-2 badge bg-warning';
-            }
+        const statusElement = document.getElementById('cacheStatus');
+        if (!statusElement) return;
+        if (result.cache_info && result.cache_info.length > 0) {
+            let statusText = '';
+            result.cache_info.forEach(item => {
+                const age = item.age_minutes !== null ? `${item.age_minutes.toFixed(1)} min` : 'N/A';
+                statusText += `${item.key}: ${age} | `;
+            });
+            statusElement.textContent = statusText.slice(0, -3); // Enlever le dernier " | "
+            statusElement.className = 'ms-2 badge bg-info';
+        } else {
+            statusElement.textContent = 'Cache vide';
+            statusElement.className = 'ms-2 badge bg-warning';
         }
     } catch (error) {
         console.error('Error getting cache status:', error);
