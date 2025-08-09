@@ -10,44 +10,26 @@ from ..routes.efficiency import find_optimal_adjustment_ratio
 
 router = APIRouter()
 
+import os
+
 def get_site_electricity_data_with_fallback(site, db: Session):
     """
     Récupère les données d'électricité d'un site avec fallback vers la configuration globale
     """
-    # Essayer d'abord les données du site
-    tier1_rate = site.electricity_tier1_rate
-    tier2_rate = site.electricity_tier2_rate
-    tier1_limit = site.electricity_tier1_limit
-    
-    # Récupérer la configuration globale pour fallback
+    # Valeurs du site
+    site_tier1_rate = float(site.electricity_tier1_rate) if site.electricity_tier1_rate is not None else None
+    site_tier2_rate = float(site.electricity_tier2_rate) if site.electricity_tier2_rate is not None else None
+    site_tier1_limit = int(site.electricity_tier1_limit) if site.electricity_tier1_limit is not None else None
+
+    # Toujours compléter avec la config globale si manquantes (fallback implicite)
     tier1_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier1_rate").first()
     tier2_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier2_rate").first()
     tier1_limit_config = db.query(models.AppConfig).filter(models.AppConfig.key == "electricity_tier1_limit").first()
-    
-    # Traiter tier1_rate
-    if tier1_rate is not None:
-        tier1_rate = float(tier1_rate)
-    elif tier1_config and tier1_config.value and float(tier1_config.value) > 0:
-        tier1_rate = float(tier1_config.value)
-    else:
-        tier1_rate = 0.0
-    
-    # Traiter tier2_rate
-    if tier2_rate is not None:
-        tier2_rate = float(tier2_rate)
-    elif tier2_config and tier2_config.value and float(tier2_config.value) > 0:
-        tier2_rate = float(tier2_config.value)
-    else:
-        tier2_rate = 0.0
-    
-    # Traiter tier1_limit
-    if tier1_limit is not None:
-        tier1_limit = int(tier1_limit)
-    elif tier1_limit_config and tier1_limit_config.value and int(tier1_limit_config.value) > 0:
-        tier1_limit = int(tier1_limit_config.value)
-    else:
-        tier1_limit = 0
-    
+
+    tier1_rate = site_tier1_rate if site_tier1_rate is not None else (float(tier1_config.value) if tier1_config and tier1_config.value else None)
+    tier2_rate = site_tier2_rate if site_tier2_rate is not None else (float(tier2_config.value) if tier2_config and tier2_config.value else None)
+    tier1_limit = site_tier1_limit if site_tier1_limit is not None else (int(tier1_limit_config.value) if tier1_limit_config and tier1_limit_config.value else None)
+
     return {
         "tier1_rate": tier1_rate,
         "tier2_rate": tier2_rate,
@@ -240,7 +222,13 @@ def get_machine_optimal_data(template_id: int, db: Session):
         from ..services.market_cache import MarketCacheService
         cache_service = MarketCacheService(db)
         market_data = cache_service.get_market_data()
-        bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
+        # Par défaut CAD si pas de site dans ce contexte
+        preferred_currency = "CAD"
+        price_map = {
+            "CAD": market_data.get("bitcoin_price_cad"),
+            "USD": market_data.get("bitcoin_price_usd"),
+        }
+        bitcoin_price = price_map.get(preferred_currency)
         fpps_rate = market_data["fpps_rate"]
         
         # Récupérer les taux d'électricité
@@ -350,7 +338,12 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
         from ..services.market_cache import MarketCacheService
         cache_service = MarketCacheService(db)
         market_data = cache_service.get_market_data()
-        bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
+        preferred_currency = site.preferred_currency or "CAD"
+        price_map = {
+            "CAD": market_data.get("bitcoin_price_cad"),
+            "USD": market_data.get("bitcoin_price_usd"),
+        }
+        bitcoin_price = price_map.get(preferred_currency)
         fpps_rate = market_data["fpps_rate"]
         
         # Récupérer les données d'électricité avec fallback vers la config globale
@@ -358,6 +351,8 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
         electricity_tier1_rate = electricity_data["tier1_rate"]
         electricity_tier2_rate = electricity_data["tier2_rate"]
         electricity_tier1_limit = electricity_data["tier1_limit"]
+
+        # Toujours utiliser fallback implicite; si toujours manquant, considérer coût 0
         
         # Étape 1: Préparer les machines avec leurs données nominales
         machines_data = []
@@ -514,6 +509,7 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
         
         return {
             "site_name": site.name,
+            "currency": preferred_currency,
             "electricity_tier1_rate": electricity_tier1_rate,
             "electricity_tier2_rate": electricity_tier2_rate,
             "electricity_tier1_limit": electricity_tier1_limit,
@@ -621,7 +617,12 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
         from ..services.market_cache import MarketCacheService
         cache_service = MarketCacheService(db)
         market_data = cache_service.get_market_data()
-        bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
+        preferred_currency = site.preferred_currency or "CAD"
+        price_map = {
+            "CAD": market_data.get("bitcoin_price_cad"),
+            "USD": market_data.get("bitcoin_price_usd"),
+        }
+        bitcoin_price = price_map.get(preferred_currency)
         fpps_rate = market_data["fpps_rate"]
         
         # Récupérer les données d'électricité avec fallback vers la config globale
@@ -629,6 +630,8 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
         electricity_tier1_rate = electricity_data["tier1_rate"]
         electricity_tier2_rate = electricity_data["tier2_rate"]
         electricity_tier1_limit = electricity_data["tier1_limit"]
+
+        # Toujours utiliser fallback implicite; si toujours manquant, considérer coût 0
         
         # Calculer les données pour chaque machine
         machines_data = []
@@ -672,11 +675,13 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
             
             # Utiliser l'API d'efficacité pour obtenir les vraies courbes d'efficacité
             try:
+                # Valeurs par défaut si ratio désactivé ou données manquantes
+                real_efficiency_th_per_watt = 0.0
+                real_efficiency_j_per_th = 0.0
                 # Si le ratio est 0.0, la machine est désactivée
                 if current_ratio == 0.0:
                     final_hashrate = 0.0
                     final_power = 0
-                    final_efficiency = 0.0
                     daily_revenue = 0
                 else:
                     # Appeler l'endpoint d'efficacité pour obtenir les données réelles
@@ -702,13 +707,31 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                         final_power = real_power
                     else:
                         # Pas de données d'efficacité disponibles pour ce ratio
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Données d'efficacité non disponibles pour le ratio {current_ratio} sur la machine {template.model}. "
-                                   f"Utilisez l'API /efficiency/machines/{template.id}/ratio-bounds pour voir les ratios disponibles."
-                        )
+                        # Fallback: utiliser nominal
+                        final_hashrate = float(template.hashrate_nominal) * current_ratio
+                        final_power = float(template.power_nominal) * current_ratio
+                        if final_power > 0 and final_hashrate > 0:
+                            real_efficiency_th_per_watt = final_hashrate / final_power
+                            real_efficiency_j_per_th = final_power / final_hashrate
+                        daily_revenue = 0
+                        if fpps_rate is not None and bitcoin_price is not None:
+                            fpps_sats_per_day = int(float(fpps_rate) * 100000000)
+                            sats_per_hour = int(final_hashrate * fpps_sats_per_day / 24)
+                            hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                            daily_revenue = hourly_revenue_cad * 24
             except HTTPException:
-                raise
+                # Fallback sur nominal si erreur API d'efficacité
+                final_hashrate = float(template.hashrate_nominal) * current_ratio
+                final_power = float(template.power_nominal) * current_ratio
+                if final_power > 0 and final_hashrate > 0:
+                    real_efficiency_th_per_watt = final_hashrate / final_power
+                    real_efficiency_j_per_th = final_power / final_hashrate
+                daily_revenue = 0
+                if fpps_rate is not None and bitcoin_price is not None:
+                    fpps_sats_per_day = int(float(fpps_rate) * 100000000)
+                    sats_per_hour = int(final_hashrate * fpps_sats_per_day / 24)
+                    hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                    daily_revenue = hourly_revenue_cad * 24
             except Exception as e:
                 # En cas d'erreur technique, retourner une erreur
                 raise HTTPException(
@@ -750,23 +773,31 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
         
         for machine in machines_data:
             daily_power_kwh = (machine["power"] * 24) / 1000
-            
-            if remaining_tier1_kwh > 0:
-                # Utiliser le premier palier
-                if daily_power_kwh <= remaining_tier1_kwh:
-                    machine_cost = daily_power_kwh * electricity_tier1_rate
-                    remaining_tier1_kwh -= daily_power_kwh
-                else:
-                    # Partie premier palier
-                    tier1_cost = remaining_tier1_kwh * electricity_tier1_rate
-                    # Partie deuxième palier
-                    tier2_kwh = daily_power_kwh - remaining_tier1_kwh
-                    tier2_cost = tier2_kwh * electricity_tier2_rate
-                    machine_cost = tier1_cost + tier2_cost
-                    remaining_tier1_kwh = 0
+
+            # Si tarifs manquants, coût = 0
+            if (
+                electricity_tier1_rate is None
+                or electricity_tier2_rate is None
+                or electricity_tier1_limit is None
+            ):
+                machine_cost = 0
             else:
-                # Utiliser seulement le deuxième palier
-                machine_cost = daily_power_kwh * electricity_tier2_rate
+                if remaining_tier1_kwh > 0:
+                    # Utiliser le premier palier
+                    if daily_power_kwh <= remaining_tier1_kwh:
+                        machine_cost = daily_power_kwh * electricity_tier1_rate
+                        remaining_tier1_kwh -= daily_power_kwh
+                    else:
+                        # Partie premier palier
+                        tier1_cost = remaining_tier1_kwh * electricity_tier1_rate
+                        # Partie deuxième palier
+                        tier2_kwh = daily_power_kwh - remaining_tier1_kwh
+                        tier2_cost = tier2_kwh * electricity_tier2_rate
+                        machine_cost = tier1_cost + tier2_cost
+                        remaining_tier1_kwh = 0
+                else:
+                    # Utiliser seulement le deuxième palier
+                    machine_cost = daily_power_kwh * electricity_tier2_rate
             
             machine["daily_cost"] = machine_cost
             machine["daily_profit"] = machine["daily_revenue"] - machine_cost
@@ -1243,7 +1274,12 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
     from ..services.market_cache import MarketCacheService
     cache_service = MarketCacheService(db)
     market_data = cache_service.get_market_data()
-    bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
+    preferred_currency = site.preferred_currency or "CAD"
+    price_map = {
+        "CAD": market_data.get("bitcoin_price_cad"),
+        "USD": market_data.get("bitcoin_price_usd"),
+    }
+    bitcoin_price = price_map.get(preferred_currency)
     fpps_rate = market_data["fpps_rate"]
     
     # Récupérer les données d'électricité avec fallback vers la config globale
@@ -1352,15 +1388,20 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
                     })
                     continue
                 
-                # Obtenir les données d'efficacité pour ce ratio
+                # Obtenir les données d'efficacité pour ce ratio (fallback nominal si indisponible)
                 from ..routes.efficiency import get_machine_efficiency_at_ratio
-                efficiency_response = await get_machine_efficiency_at_ratio(template.id, ratio, db)
-                
-                if efficiency_response and efficiency_response.get("effective_hashrate") and efficiency_response.get("power_consumption"):
-                    hashrate = float(efficiency_response["effective_hashrate"])
-                    power = int(efficiency_response["power_consumption"])
-                    
-                    machine_performances.append({
+                try:
+                    efficiency_response = await get_machine_efficiency_at_ratio(template.id, ratio, db)
+                    if efficiency_response and efficiency_response.get("effective_hashrate") and efficiency_response.get("power_consumption"):
+                        hashrate = float(efficiency_response["effective_hashrate"])
+                        power = int(efficiency_response["power_consumption"])
+                    else:
+                        raise Exception("no efficiency")
+                except Exception:
+                    hashrate = float(template.hashrate_nominal) * ratio
+                    power = int(float(template.power_nominal) * ratio)
+
+                machine_performances.append({
                         "machine_id": machine.id,
                         "template_id": template.id,
                         "name": machine.custom_name or template.model,
@@ -1370,9 +1411,9 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
                         "efficiency": hashrate / power if power > 0 else 0,
                         "status": "active"
                     })
-                    
-                    total_hashrate += hashrate
-                    total_power += power
+                
+                total_hashrate += hashrate
+                total_power += power
             
             if not machine_performances:
                 continue
@@ -1464,6 +1505,7 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
         "message": f"Optimisation globale calculée pour {len(machines)} machine(s) - Prêt à appliquer",
         "site_id": site_id,
         "site_name": site.name,
+        "currency": preferred_currency,
         "combinations_tested": len(all_combinations),
         "best_profit": best_profit,
         "best_combination": best_combination,
@@ -1499,7 +1541,12 @@ async def fine_site_optimization(
     from ..services.market_cache import MarketCacheService
     cache_service = MarketCacheService(db)
     market_data = cache_service.get_market_data()
-    bitcoin_price = market_data["bitcoin_price"] if market_data["bitcoin_price"] is not None else None
+    preferred_currency = site.preferred_currency or "CAD"
+    price_map = {
+        "CAD": market_data.get("bitcoin_price_cad"),
+        "USD": market_data.get("bitcoin_price_usd"),
+    }
+    bitcoin_price = price_map.get(preferred_currency)
     fpps_rate = market_data["fpps_rate"]
     
     # Récupérer les données d'électricité avec fallback vers la config globale
@@ -1830,6 +1877,7 @@ async def fine_site_optimization(
         "message": f"Optimisation fine calculée pour {len(machines)} machine(s) - Prêt à appliquer",
         "site_id": site_id,
         "site_name": site.name,
+        "currency": preferred_currency,
         "combinations_tested": len(all_results),
         "coarse_combinations": len(coarse_results),
         "fine_combinations": len(fine_results),

@@ -24,11 +24,11 @@ async def get_current_market_data(db: Session = Depends(get_db)):
         
         # Formater les données pour la compatibilité
         formatted_data = {
-            "bitcoin_price_usd": None,  # On se concentre sur CAD
-            "bitcoin_price_cad": market_data["bitcoin_price"],
-            "fpps_sats": market_data["fpps_sats"],
-            "fpps_btc": market_data["fpps_rate"],
-            "fpps_status": "real" if market_data["fpps_rate"] else "cached_or_error"
+            "bitcoin_price_usd": market_data.get("bitcoin_price_usd"),
+            "bitcoin_price_cad": market_data.get("bitcoin_price_cad"),
+            "fpps_sats": market_data.get("fpps_sats"),
+            "fpps_btc": market_data.get("fpps_rate"),
+            "fpps_status": "real" if market_data.get("fpps_rate") else "cached_or_error"
         }
         
         return {
