@@ -4682,6 +4682,7 @@ async function applyOptimalRatios() {
 
         if (machinesCount === 1) {
             showIndividualOptimizationLoading();
+            showNotification('Optimisation fine: balayage précis autour du sweet spot', 'info');
             // Lancer optimisation fine avec paramètres par défaut
             await apiClient.post(`/sites/${currentSiteId}/fine-optimization?fine_range=0.1&fine_step=0.01`);
             const data = await apiClient.post(`/sites/${currentSiteId}/apply-fine-optimization`);
@@ -4715,8 +4716,10 @@ function showIndividualOptimizationLoading() {
             <div class="modal-dialog modal-lg">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">
-                            <i class="fas fa-cogs"></i> Optimisation Individuelle Précise en Cours
+                        <h5 class="modal-title d-flex align-items-center gap-2">
+                            <i class="fas fa-cogs"></i>
+                            <span>Optimisation Individuelle Précise en Cours</span>
+                            <span class="badge bg-info text-dark">Optimisation fine</span>
                         </h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
