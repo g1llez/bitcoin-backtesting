@@ -1110,19 +1110,7 @@ async function startFineOptimization(siteId, globalResults = null) {
         }
         
         // Construire l'URL avec les paramètres
-        const url = new URL(`${API_BASE}/sites/${siteId}/fine-optimization`);
-        url.searchParams.set('fine_range', fineRange);
-        url.searchParams.set('fine_step', fineStep);
-        
-        const response = await fetch(url, {
-            method: 'POST'
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        const result = await response.json();
+        const result = await apiClient.post(`/sites/${siteId}/fine-optimization?fine_range=${encodeURIComponent(fineRange)}&fine_step=${encodeURIComponent(fineStep)}`);
         
         // Ajouter les résultats globaux au résultat final pour l'affichage
         if (globalResults) {
@@ -2242,10 +2230,9 @@ async function loadSiteStatistics(siteId) {
     if (deletedSiteIds.has(siteId)) return;
     try {
         // Charger les statistiques du site
-        const statsResponse = await fetch(`${API_BASE}/sites/${siteId}/statistics`);
-        if (!statsResponse.ok) {
-            if (statsResponse.status === 404) {
-                // Site supprimé ou inexistant: vider les compteurs et sortir
+        const stats = await apiClient.get(`/sites/${siteId}/statistics`).catch(err => ({ __error: err }));
+        if (stats && stats.__error) {
+            if (stats.__error.status === 404) {
                 const machineCount = document.getElementById('siteMachineCount');
                 const totalHashrate = document.getElementById('siteTotalHashrate');
                 if (machineCount) machineCount.textContent = '';
@@ -2254,8 +2241,6 @@ async function loadSiteStatistics(siteId) {
             }
             throw new Error('Failed to load site statistics');
         }
-        
-        const stats = await statsResponse.json();
         
         // Note: Les données du site sont rechargées séparément dans saveSite
         // pour éviter les conflits d'affichage
@@ -2950,12 +2935,7 @@ function updateMarketDataDisplay(data) {
 // Cache Management Functions
 async function clearMarketCache() {
     try {
-        const response = await fetch(`${API_BASE}/market/cache/clear`, {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            const result = await response.json();
+        const result = await apiClient.post(`/market/cache/clear`);
             showNotification('Cache vidé avec succès! Les données seront rechargées au prochain appel.', 'success');
             
             // Recharger les données de marché
@@ -2977,10 +2957,7 @@ async function clearMarketCache() {
 
 async function getCacheStatus() {
     try {
-        const response = await fetch(`${API_BASE}/market/cache/status`);
-        
-        if (response.ok) {
-            const result = await response.json();
+        const result = await apiClient.get(`/market/cache/status`);
             const statusElement = document.getElementById('cacheStatus');
             
             if (result.cache_info && result.cache_info.length > 0) {
@@ -2995,8 +2972,6 @@ async function getCacheStatus() {
                 statusElement.textContent = 'Cache vide';
                 statusElement.className = 'ms-2 badge bg-warning';
             }
-        } else {
-            throw new Error('Erreur lors de la récupération du statut');
         }
     } catch (error) {
         console.error('Error getting cache status:', error);
@@ -3027,8 +3002,7 @@ async function loadConfiguration() {
     try {
         
         // Charger la configuration depuis l'API
-        const response = await fetch(`${API_BASE}/config/app/settings`);
-        const data = await response.json();
+        const data = await apiClient.get(`/config/app/settings`);
         
         // Remplir les champs avec les valeurs de la DB (configuration globale)
         if (data.settings.braiins_token) {
@@ -3068,17 +3042,7 @@ async function saveConfiguration() {
         };
         
         // Sauvegarder la configuration globale
-        const response = await fetch(`${API_BASE}/config/app/settings`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(config)
-        });
-        
-        if (!response.ok) {
-            throw new Error('Erreur lors de la sauvegarde de la configuration globale');
-        }
+        await apiClient.post(`/config/app/settings`, config);
         
             // Fermer le modal
             bootstrap.Modal.getInstance(document.getElementById('configModal')).hide();
