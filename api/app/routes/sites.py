@@ -66,7 +66,7 @@ def get_accepted_shares_with_fallback(site, db: Session):
                 machine_shares = float(template.accepted_shares_24h) * instance.quantity
                 total_accepted_shares += machine_shares
                 shares_source = "machine_template"
-            # Pas de fallback - les accepted shares sont obligatoires
+            # Si ni l'instance ni le template n'ont de shares, on continue (pas d'erreur)
     
     if total_accepted_shares == 0:
         return None, "no_shares"

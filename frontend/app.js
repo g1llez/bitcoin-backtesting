@@ -821,18 +821,8 @@ async function loadGlobalOptimization() {
             return;
         }
         
-        // Vérifier d'abord si le site a des accepted shares configurées
-        const siteSummary = await apiClient.get(`/sites/${currentSiteId}/summary`);
-        
-        // Vérifier si des shares sont configurées (soit au niveau du site, soit au niveau des machines)
-        const hasShares = siteSummary.machines && siteSummary.machines.some(machine => 
-            machine.accepted_shares_24h && machine.accepted_shares_24h > 0
-        );
-        
-        if (!hasShares) {
-            showNotification('⚠️ Impossible de calculer l\'optimisation : aucune accepted shares configurée. Configurez des shares pour vos machines avant d\'optimiser.', 'warning');
-            return;
-        }
+        // Note: La vérification des accepted shares est maintenant gérée côté API
+        // avec fallback automatique instance > template
         
         // Afficher immédiatement la modal avec indicateur de chargement
         showGlobalOptimizationLoading();
@@ -1262,24 +1252,8 @@ async function startFineOptimization(siteId, globalResults = null) {
     console.log('fineRange:', fineRange);
     console.log('fineStep:', fineStep);
     
-    // Vérifier d'abord si le site a des accepted shares configurées
-    try {
-        const siteSummary = await apiClient.get(`/sites/${siteId}/summary`);
-        
-        // Vérifier si des shares sont configurées (soit au niveau du site, soit au niveau des machines)
-        const hasShares = siteSummary.machines && siteSummary.machines.some(machine => 
-            machine.accepted_shares_24h && machine.accepted_shares_24h > 0
-        );
-        
-        if (!hasShares) {
-            showNotification('⚠️ Impossible de calculer l\'optimisation : aucune accepted shares configurée. Configurez des shares pour vos machines avant d\'optimiser.', 'warning');
-            return;
-        }
-    } catch (error) {
-        console.error('Erreur lors de la vérification des shares:', error);
-        showNotification('Erreur lors de la vérification des shares', 'error');
-        return;
-    }
+    // Note: La vérification des accepted shares est maintenant gérée côté API
+    // avec fallback automatique instance > template
     
     // Fermer la modal de configuration
     const configModal = bootstrap.Modal.getInstance(document.getElementById('fineOptimizationConfigModal'));
