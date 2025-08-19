@@ -41,7 +41,9 @@
             <div class="col-md-3 sidebar" id="mainSidebar">
                 <div class="card">
                     <div class="card-header">
-                        <h5><i class="fas fa-building"></i> Sites & Machines</h5>
+                        <h5 onclick="showGlobalOverview()" style="cursor: pointer;" title="Vue globale des sites">
+                            <i class="fas fa-building"></i> Sites & Machines
+                        </h5>
                         <div class="card-actions">
                             <button class="btn btn-sm btn-outline-primary" onclick="openSiteModal()">
                                 <i class="fas fa-plus"></i> Site
@@ -450,6 +452,41 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Global Sites Overview -->
+                <div class="row mb-4">
+                    <div class="col-12">
+                        <div class="card" id="globalSitesOverviewCard" style="display: none;">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5><i class="fas fa-globe"></i> Vue Globale des Sites</h5>
+                                <div class="btn-group" role="group">
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="refreshGlobalSitesOverview()">
+                                        <i class="fas fa-sync"></i> Actualiser
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-striped" id="globalSitesOverviewTable">
+                                        <thead>
+                                            <tr>
+                                                <th>Site</th>
+                                                <th>Machines</th>
+                                                <th>Hashrate total</th>
+                                                <th>Revenu/jour</th>
+                                                <th>Coût/jour</th>
+                                                <th>Profit/jour</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="globalSitesOverviewTableBody">
+                                            <!-- L'aperçu des sites sera chargé ici -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 
                 <!-- Site Summary Table -->
                 <div class="row mb-4">
@@ -590,6 +627,11 @@
                                         <span class="label">Profit Quotidien:</span>
                                         <span class="value optimal-profit">$2.10</span>
                                     </div>
+                                    <div class="result-item mt-3">
+                                        <button type="button" class="btn btn-success btn-sm" onclick="applyIndividualOptimization()" id="applyIndividualBtn" style="display: none;">
+                                            <i class="fas fa-check"></i> Appliquer ce ratio optimal
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -614,6 +656,76 @@
                                             <!-- Data will be loaded here -->
                                         </tbody>
                                     </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Individual Optimization Results Modal -->
+    <div class="modal fade" id="individualOptimizationModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="fas fa-cog"></i> Résultats de l'Optimisation Individuelle
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="optimization-result">
+                                <div class="result-item">
+                                    <span class="label">Type d'optimisation:</span>
+                                    <span class="value optimization-type-modal">Économique</span>
+                                </div>
+                                <div class="result-item">
+                                    <span class="label">Ratio Optimal:</span>
+                                    <span class="value optimal-ratio-modal">0.85</span>
+                                </div>
+                                <div class="result-item">
+                                    <span class="label">Hashrate:</span>
+                                    <span class="value optimal-hashrate-modal">108.5 TH/s</span>
+                                </div>
+                                <div class="result-item">
+                                    <span class="label">Puissance:</span>
+                                    <span class="value optimal-power-modal">2762W</span>
+                                </div>
+                                <div class="result-item efficiency-modal" style="display: none;">
+                                    <span class="label">Efficacité:</span>
+                                    <span class="value optimal-efficiency-modal">--</span>
+                                </div>
+                                <div class="result-item sats-modal">
+                                    <span class="label">Sats/heure:</span>
+                                    <span class="value optimal-sats-modal">--</span>
+                                </div>
+                                <div class="result-item revenue-modal">
+                                    <span class="label">Revenu Quotidien:</span>
+                                    <span class="value optimal-revenue-modal">$4.25</span>
+                                </div>
+                                <div class="result-item cost-modal">
+                                    <span class="label">Coût Hydro Quotidien:</span>
+                                    <span class="value optimal-cost-modal">$2.15</span>
+                                </div>
+                                <div class="result-item profit-modal">
+                                    <span class="label">Profit Quotidien:</span>
+                                    <span class="value optimal-profit-modal">$2.10</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-center">
+                                <button type="button" class="btn btn-success btn-lg" onclick="applyIndividualOptimization()" id="applyIndividualBtnModal">
+                                    <i class="fas fa-check"></i> Appliquer ce ratio optimal
+                                </button>
+                                <div class="mt-3">
+                                    <small class="text-muted">
+                                        Ce ratio sera appliqué à la machine sélectionnée
+                                    </small>
                                 </div>
                             </div>
                         </div>
@@ -841,6 +953,11 @@
                                 <div class="mb-3">
                                     <label class="form-label">Notes</label>
                                     <textarea class="form-control" id="templateNotes" rows="3"></textarea>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Accepted Shares 24h</label>
+                                    <input type="number" class="form-control" id="templateAcceptedShares" step="1" min="0" placeholder="Nombre de shares acceptées par jour">
+                                    <small class="form-text text-muted">Nombre de shares acceptées par jour pour ce modèle de machine</small>
                                 </div>
                             </div>
                         </div>

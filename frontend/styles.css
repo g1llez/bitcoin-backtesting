@@ -376,6 +376,36 @@ body {
     transition: all 0.3s ease;
 }
 
+/* Assurer les arrondis corrects pour les groupes de boutons Bootstrap */
+#siteSummaryCard .btn-group .btn {
+    border-radius: 0;
+}
+
+#siteSummaryCard .btn-group .btn:first-child {
+    border-top-left-radius: .40rem;
+    border-bottom-left-radius: .40rem;
+}
+
+#siteSummaryCard .btn-group .btn:last-child {
+    border-top-right-radius: .40rem;
+    border-bottom-right-radius: .40rem;
+}
+
+#siteSummaryCard .btn-group .btn + .btn {
+    margin-left: -1px; /* éviter interstices si bordures personnalisées */
+}
+
+/* Classes utilitaires appliquées dynamiquement pour arrondis */
+#siteSummaryCard .btn-group .btn.rounded-left {
+  border-top-left-radius: .40rem !important;
+  border-bottom-left-radius: .40rem !important;
+}
+
+#siteSummaryCard .btn-group .btn.rounded-right {
+  border-top-right-radius: .40rem !important;
+  border-bottom-right-radius: .40rem !important;
+}
+
 .btn:hover {
     transform: translateY(-1px);
     box-shadow: 0 4px 8px rgba(0,0,0,0.2);

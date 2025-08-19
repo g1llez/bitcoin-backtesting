@@ -39,6 +39,7 @@ class MachineTemplate(Base):
     power_nominal = Column(Integer, nullable=False)  # Watts
     efficiency_base = Column(DECIMAL(10, 2), nullable=False)  # J/TH
     price_cad = Column(DECIMAL(10, 2))  # Prix en CAD
+    accepted_shares_24h = Column(BigInteger)  # Shares acceptées par jour pour cette machine
     release_date = Column(Date)
     is_active = Column(Boolean, default=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
@@ -141,6 +142,7 @@ class SiteMachineInstance(Base):
     optimal_ratio = Column(DECIMAL(5, 3))  # Ratio d'ajustement optimal appliqué à cette instance
     global_optimal_ratio = Column(DECIMAL(5, 3))  # Ratio optimal global (après optimisation globale)
     ratio_type = Column(String(10), default='nominal')  # Type de ratio: manual, optimal, nominal, global
+    accepted_shares_24h = Column(BigInteger)  # Shares acceptées par jour pour cette instance spécifique
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
     

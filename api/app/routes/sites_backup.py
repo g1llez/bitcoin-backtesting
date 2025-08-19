@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 from decimal import Decimal
-import requests
 
 from ..database import get_db
 from ..models import models
@@ -37,42 +36,6 @@ def get_site_electricity_data_with_fallback(site, db: Session):
         "tier1_limit": tier1_limit
     }
 
-def get_accepted_shares_with_fallback(site, db: Session):
-    """
-    Récupère les accepted shares avec fallback : Machine → Template Machine
-    """
-    # Récupérer toutes les instances de machines du site
-    instances = db.query(models.SiteMachineInstance).filter(
-        models.SiteMachineInstance.site_id == site.id
-    ).all()
-    
-    total_accepted_shares = 0
-    shares_source = "unknown"
-    
-    for instance in instances:
-        template = db.query(models.MachineTemplate).filter(
-            models.MachineTemplate.id == instance.template_id,
-            models.MachineTemplate.is_active == True
-        ).first()
-        
-        if template:
-            # Priorité 1: Machine-specific (instance)
-            if instance.accepted_shares_24h is not None:
-                machine_shares = float(instance.accepted_shares_24h) * instance.quantity
-                total_accepted_shares += machine_shares
-                shares_source = "machine_instance"
-            # Priorité 2: Template Machine (fallback)
-            elif template.accepted_shares_24h is not None:
-                machine_shares = float(template.accepted_shares_24h) * instance.quantity
-                total_accepted_shares += machine_shares
-                shares_source = "machine_template"
-            # Pas de fallback - les accepted shares sont obligatoires
-    
-    if total_accepted_shares == 0:
-        return None, "no_shares"
-    
-    return total_accepted_shares, shares_source
-
 def calculate_site_revenue_from_shares(site, db: Session):
     """
     Fonction centralisée pour calculer les revenus d'un site basée sur les accepted shares
@@ -81,175 +44,102 @@ def calculate_site_revenue_from_shares(site, db: Session):
     Returns:
         dict: Dictionnaire contenant les revenus calculés et les détails du calcul
     """
-    # Calculer les accepted shares ajustées par le ratio courant (Machine Instance -> Template)
-    # IMPORTANT: Les ratios sont appliqués aux shares, pas au TH/s pour les calculs de profit
-    instances = db.query(models.SiteMachineInstance).filter(
-        models.SiteMachineInstance.site_id == site.id
-    ).all()
-    total_accepted_shares = 0.0
-    used_sources = set()
-    for instance in instances:
-        template = db.query(models.MachineTemplate).filter(
-            models.MachineTemplate.id == instance.template_id,
-            models.MachineTemplate.is_active == True
-        ).first()
-        if not template:
-            continue
-        # Ratio courant appliqué à l'instance
-        current_ratio = float(instance.optimal_ratio) if instance.optimal_ratio is not None else 1.0
-        if current_ratio == 0.0:
-            continue
-        # Source des shares: instance > template
-        base_shares = None
-        if instance.accepted_shares_24h is not None:
-            base_shares = float(instance.accepted_shares_24h)
-            used_sources.add("machine_instance")
-        elif template.accepted_shares_24h is not None:
-            base_shares = float(template.accepted_shares_24h)
-            used_sources.add("machine_template")
-        # Ajouter la contribution si disponible (par unité), multipliée par quantité et ratio
-        # Le ratio est appliqué aux shares, pas au TH/s
-        if base_shares is not None:
-            total_accepted_shares += base_shares * current_ratio * instance.quantity
-    shares_source = (
-        "no_shares" if len(used_sources) == 0 else (list(used_sources)[0] if len(used_sources) == 1 else "mixed")
-    )
-
-    # Si pas d'accepted shares, retourner des revenus à 0
-    if total_accepted_shares == 0:
-        return {
-            "total_daily_revenue": 0,
-            "btc_earned_24h": 0,
-            "calculation_details": {
-                "accepted_shares_24h": None,
-                "network_difficulty": None,
-                "coinbase_reward_btc": None,
-                "bitcoin_price_cad": None,
-                "shares_source": shares_source,
-                "note": "Aucune accepted shares configurée - revenus non calculables"
-            }
-        }
+    import requests
+    
+    # Logique pour récupérer le token Braiins (site-specific puis global)
+    braiins_token = None
+    token_source = "unknown"
+    
+    if site.braiins_token and site.braiins_token.strip():
+        braiins_token = site.braiins_token.strip()
+        token_source = "site_specific"
+    else:
+        # Fallback vers la config globale
+        global_config = db.query(models.AppConfig).filter(models.AppConfig.key == "braiins_token").first()
+        if global_config and global_config.value and global_config.value.strip():
+            braiins_token = global_config.value.strip()
+            token_source = "global_config"
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail="Aucun token Braiins trouvé (ni site-specific ni global)"
+            )
+    
+    try:
+        # Récupérer les accepted shares depuis Braiins
+        braiins_response = requests.get(
+            "https://pool.braiins.com/accounts/profile/json/btc/",
+            headers={"Pool-Auth-Token": braiins_token},
+            timeout=10
+        )
+        braiins_response.raise_for_status()
+        braiins_data = braiins_response.json()
+        
+        accepted_shares_24h = braiins_data.get("btc", {}).get("accepted_shares_24h")
+        if accepted_shares_24h is None:
+            accepted_shares_24h = braiins_data.get("btc", {}).get("shares_24h")
+        
+        if accepted_shares_24h is None:
+            raise HTTPException(status_code=404, detail="accepted_shares_24h not found in Braiins API response")
+        
+        accepted_shares_24h = float(accepted_shares_24h)
+            
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching accepted shares from Braiins API: {e}")
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=500, detail=f"Invalid response data from Braiins API: {e}")
     
     try:
         # Récupérer la difficulté du réseau
         difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
         difficulty_response.raise_for_status()
         network_difficulty = float(difficulty_response.text)
-    except (requests.exceptions.RequestException, requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout) as e:
-        # En cas d'erreur de connectivité, retourner des revenus à 0 avec un message explicatif
-        return {
-            "total_daily_revenue": 0,
-            "btc_earned_24h": 0,
-            "calculation_details": {
-                "accepted_shares_24h": total_accepted_shares,
-                "network_difficulty": None,
-                "coinbase_reward_btc": None,
-                "bitcoin_price_cad": None,
-                "shares_source": shares_source,
-                "note": f"Erreur de connectivité réseau - impossible de récupérer la difficulté: {str(e)[:100]}"
-            }
-        }
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching network difficulty: {e}")
     except ValueError as e:
-        # En cas d'erreur de parsing, retourner des revenus à 0
-        return {
-            "total_daily_revenue": 0,
-            "btc_earned_24h": 0,
-            "calculation_details": {
-                "accepted_shares_24h": total_accepted_shares,
-                "network_difficulty": None,
-                "coinbase_reward_btc": None,
-                "bitcoin_price_cad": None,
-                "shares_source": shares_source,
-                "note": f"Erreur de parsing de la difficulté réseau: {str(e)[:100]}"
-            }
-        }
+        raise HTTPException(status_code=500, detail=f"Error fetching network difficulty: {e}")
         
     try:
         # Récupérer la récompense de bloc depuis l'API Blockchain.info
         block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
         block_reward_response.raise_for_status()
-        coinbase_reward = float(block_reward_response.text)  # Déjà en BTC
-    except (requests.exceptions.RequestException, requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout) as e:
-        # En cas d'erreur de connectivité, retourner des revenus à 0 avec un message explicatif
-        return {
-            "total_daily_revenue": 0,
-            "btc_earned_24h": 0,
-            "calculation_details": {
-                "accepted_shares_24h": total_accepted_shares,
-                "network_difficulty": network_difficulty,
-                "coinbase_reward_btc": None,
-                "bitcoin_price_cad": None,
-                "shares_source": shares_source,
-                "note": f"Erreur de connectivité réseau - impossible de récupérer la récompense de bloc: {str(e)[:100]}"
-            }
-        }
+        coinbase_reward = float(block_reward_response.text) / 100000000  # Convertir satoshis en BTC
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching block reward: {e}")
     except ValueError as e:
-        # En cas d'erreur de parsing, retourner des revenus à 0
-        return {
-            "total_daily_revenue": 0,
-            "btc_earned_24h": 0,
-            "calculation_details": {
-                "accepted_shares_24h": total_accepted_shares,
-                "network_difficulty": network_difficulty,
-                "coinbase_reward_btc": None,
-                "bitcoin_price_cad": None,
-                "shares_source": shares_source,
-                "note": f"Erreur de parsing de la récompense de bloc: {str(e)[:100]}"
-            }
-        }
+        raise HTTPException(status_code=500, detail=f"Invalid response for block reward: {e}")
         
     try:
-        # Utiliser le système de cache existant pour le prix Bitcoin
-        from ..services.market_cache import MarketCacheService
-        cache_service = MarketCacheService(db)
-        bitcoin_prices = cache_service.get_cached_bitcoin_price()
+        # Récupérer le prix Bitcoin en CAD
+        coingecko_response = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=cad",
+            timeout=10
+        )
+        coingecko_response.raise_for_status()
+        coingecko_data = coingecko_response.json()
+        bitcoin_price_cad = coingecko_data.get("bitcoin", {}).get("cad")
         
-        if bitcoin_prices and bitcoin_prices.get("CAD"):
-            bitcoin_price_cad = bitcoin_prices["CAD"]
-        else:
-            # En cas de prix Bitcoin indisponible, retourner des revenus à 0
-            return {
-                "total_daily_revenue": 0,
-                "btc_earned_24h": btc_earned_24h,
-                "calculation_details": {
-                    "accepted_shares_24h": total_accepted_shares,
-                    "network_difficulty": network_difficulty,
-                    "coinbase_reward_btc": coinbase_reward,
-                    "bitcoin_price_cad": None,
-                    "shares_source": shares_source,
-                    "note": "Prix Bitcoin en CAD non disponible depuis le cache ou l'API"
-                }
-            }
+        if bitcoin_price_cad is None:
+            raise HTTPException(status_code=500, detail="Bitcoin price in CAD not found in CoinGecko API response")
             
-    except Exception as e:
-        # En cas d'erreur de cache, retourner des revenus à 0
-        return {
-            "total_daily_revenue": 0,
-            "btc_earned_24h": btc_earned_24h,
-            "calculation_details": {
-                "accepted_shares_24h": total_accepted_shares,
-                "network_difficulty": network_difficulty,
-                "coinbase_reward_btc": coinbase_reward,
-                "bitcoin_price_cad": None,
-                "shares_source": shares_source,
-                "note": f"Erreur lors de la récupération du prix Bitcoin depuis le cache: {str(e)[:100]}"
-            }
-        }
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching Bitcoin price from CoinGecko: {e}")
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=500, detail=f"Invalid JSON response from CoinGecko API: {e}")
     
     # Calculer le revenu total pour le site basé sur la formule CRC = C × S/D
-    btc_earned_24h = (coinbase_reward * total_accepted_shares) / network_difficulty
+    btc_earned_24h = (coinbase_reward * accepted_shares_24h) / network_difficulty
     total_daily_revenue = btc_earned_24h * bitcoin_price_cad
     
     return {
         "total_daily_revenue": total_daily_revenue,
         "btc_earned_24h": btc_earned_24h,
         "calculation_details": {
-            "accepted_shares_24h": total_accepted_shares,
+            "accepted_shares_24h": accepted_shares_24h,
             "network_difficulty": network_difficulty,
             "coinbase_reward_btc": coinbase_reward,
             "bitcoin_price_cad": bitcoin_price_cad,
-            "shares_source": shares_source,
-            "ratio_adjusted": True,
+            "braiins_token_source": token_source,
         }
     }
 
@@ -683,10 +573,13 @@ async def calculate_multi_machine_optimal_ratios(site_id: int, db: Session):
             machine["optimal_hashrate"] = real_hashrate
             machine["optimal_power"] = real_power
             
-            # Calculer les revenus basés sur les accepted shares
-            # Note: Les revenus individuels par machine sont calculés globalement au niveau du site
-            # Chaque machine individuelle affiche 0 car le calcul se fait avec les accepted shares totales du site
+            # Calculer les revenus
             daily_revenue = 0
+            if fpps_rate is not None and bitcoin_price is not None:
+                fpps_sats_per_day = int(float(fpps_rate) * 100000000)
+                sats_per_hour = int(machine["optimal_hashrate"] * fpps_sats_per_day / 24)
+                hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                daily_revenue = hourly_revenue_cad * 24
             
             machine["daily_revenue"] = daily_revenue
             
@@ -760,20 +653,6 @@ async def calculate_site_profit(
     total_daily_revenue = revenue_data["total_daily_revenue"]
     calculation_details = revenue_data["calculation_details"]
     
-    # Vérifier si les revenus sont calculables
-    if total_daily_revenue == 0 and calculation_details.get("note"):
-        # Pas de shares configurées
-        return {
-            "site_id": site_id,
-            "site_name": site.name,
-            "total_daily_revenue": "N/A",
-            "total_daily_cost": round(total_daily_cost, 2),
-            "total_daily_profit": "N/A",
-            "calculation_details": calculation_details,
-            "machines": machines_results,
-            "note": "Revenus non calculables - configurez les accepted shares pour vos machines"
-        }
-    
     # Récupérer toutes les instances de machines du site pour le calcul des coûts
     site_machines = db.query(models.SiteMachineInstance).filter(models.SiteMachineInstance.site_id == site_id).all()
     
@@ -808,7 +687,14 @@ async def calculate_site_profit(
         "total_daily_revenue": round(total_daily_revenue, 2),
         "total_daily_cost": round(total_daily_cost, 2),
         "total_daily_profit": round(total_daily_profit, 2),
-        "calculation_details": calculation_details,
+        "calculation_details": {
+            "accepted_shares_24h": accepted_shares_24h,
+            "network_difficulty": network_difficulty,
+            "coinbase_reward_btc": coinbase_reward,
+            "bitcoin_price_cad": bitcoin_price_cad,
+            "btc_earned_24h": btc_earned_24h,
+            "braiins_token_source": token_source,
+        },
         "machines": machines_results
     } 
 
@@ -839,14 +725,100 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                 "total_profit": 0
             }
         
-        # Utiliser la fonction centralisée pour calculer les revenus
-        revenue_data = calculate_site_revenue_from_shares(site, db)
-        total_daily_revenue = revenue_data["total_daily_revenue"]
-        calculation_details = revenue_data["calculation_details"]
+        # Récupérer le token Braiins : d'abord depuis le site, sinon depuis la config globale
+        braiins_token = None
+        token_source = "site"
         
-        # Préparer l'affichage des revenus (le profit sera calculé après le coût total)
-        revenue_display = "N/A" if total_daily_revenue == 0 and calculation_details.get("note") else round(total_daily_revenue, 2)
-        profit_display = None  # calculé après le total_cost
+        if site.braiins_token and site.braiins_token.strip():
+            # Le site a son propre token
+            braiins_token = site.braiins_token.strip()
+            print(f"DEBUG: Site {site.id} - Using site-specific Braiins token: '{braiins_token[:10]}...'")
+        else:
+            # Fallback vers le token global
+            braiins_token_config = db.query(models.AppConfig).filter(models.AppConfig.key == "braiins_token").first()
+            if not braiins_token_config or not braiins_token_config.value or not braiins_token_config.value.strip():
+                print(f"DEBUG: Site {site.id} - No site token and no global Braiins token configured")
+                raise HTTPException(status_code=400, detail="Braiins API token is required (either site-specific or global configuration)")
+            
+            braiins_token = braiins_token_config.value.strip()
+            token_source = "global"
+            print(f"DEBUG: Site {site.id} - Using global Braiins token: '{braiins_token[:10]}...'")
+        
+        # Récupérer les données nécessaires pour le calcul des revenus basé sur les accepted shares
+        import requests
+        
+        # Valeurs par défaut
+        accepted_shares_24h = None
+        network_difficulty = None
+        bitcoin_price_cad = None
+        coinbase_reward = None
+        total_daily_revenue = 0
+        
+        try:
+            # Récupérer les accepted shares depuis Braiins
+            braiins_response = requests.get(
+                "https://pool.braiins.com/accounts/profile/json/btc/",
+                headers={"Pool-Auth-Token": site.braiins_token},
+                timeout=10
+            )
+            braiins_response.raise_for_status()
+            braiins_data = braiins_response.json()
+            
+            accepted_shares_24h = braiins_data.get("btc", {}).get("accepted_shares_24h")
+            if accepted_shares_24h is None:
+                accepted_shares_24h = braiins_data.get("btc", {}).get("shares_24h")
+            
+            if accepted_shares_24h is None:
+                raise HTTPException(status_code=404, detail="accepted_shares_24h not found in Braiins API response")
+            
+            accepted_shares_24h = float(accepted_shares_24h)
+                
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Error fetching accepted shares from Braiins API: {e}")
+        except (ValueError, KeyError) as e:
+            raise HTTPException(status_code=500, detail=f"Invalid response data from Braiins API: {e}")
+        
+        try:
+            # Récupérer la difficulté du réseau
+            difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
+            difficulty_response.raise_for_status()
+            network_difficulty = float(difficulty_response.text)
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Error fetching network difficulty: {e}")
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=f"Invalid response for network difficulty: {e}")
+            
+        try:
+            # Récupérer la récompense de bloc depuis l'API Blockchain.info
+            block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
+            block_reward_response.raise_for_status()
+            coinbase_reward = float(block_reward_response.text) / 100000000  # Convertir satoshis en BTC
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Error fetching block reward: {e}")
+        except ValueError as e:
+            raise HTTPException(status_code=500, detail=f"Invalid response for block reward: {e}")
+            
+        try:
+            # Récupérer le prix Bitcoin en CAD
+            coingecko_response = requests.get(
+                "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=cad",
+                timeout=10
+            )
+            coingecko_response.raise_for_status()
+            coingecko_data = coingecko_response.json()
+            bitcoin_price_cad = coingecko_data.get("bitcoin", {}).get("cad")
+            
+            if bitcoin_price_cad is None:
+                raise HTTPException(status_code=500, detail="Bitcoin price in CAD not found in CoinGecko API response")
+                
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(status_code=500, detail=f"Error fetching Bitcoin price from CoinGecko: {e}")
+        except (ValueError, KeyError) as e:
+            raise HTTPException(status_code=500, detail=f"Invalid JSON response from CoinGecko API: {e}")
+        
+        # Calculer le revenu total pour le site basé sur la formule CRC = C × S/D
+        btc_earned_24h = (coinbase_reward * accepted_shares_24h) / network_difficulty
+        total_daily_revenue = btc_earned_24h * bitcoin_price_cad
         
         # Récupérer les données d'électricité avec fallback vers la config globale
         electricity_data = get_site_electricity_data_with_fallback(site, db)
@@ -872,9 +844,11 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
             if not template:
                 continue
             
-            # Utiliser les données stockées au lieu de recalculer l'optimal
-            # Cela évite les calculs complexes d'optimisation à chaque affichage
-            optimal_ratio = None  # On n'a pas besoin de recalculer l'optimal ici
+            # Récupérer les données optimales de la machine
+            optimal_data = get_machine_optimal_data(template.id, db)
+            hashrate = optimal_data.get('hashrate', template.hashrate_nominal)
+            power = optimal_data.get('power', template.power_nominal)
+            optimal_ratio = optimal_data.get('optimal_ratio', None)
             
             # Vérifier s'il y a un ratio manuel appliqué pour cette instance
             current_ratio = 1.0
@@ -894,75 +868,59 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                 hashrate = float(template.hashrate_nominal)
                 power = float(template.power_nominal)
             
-            # Calcul simple d'efficacité sans appels API complexes
-            # Si le ratio est 0.0, la machine est désactivée
-            if current_ratio == 0.0:
-                final_hashrate = 0.0
-                final_power = 0
-                daily_revenue = 0
+            # Utiliser l'API d'efficacité pour obtenir les vraies courbes d'efficacité
+            try:
+                # Valeurs par défaut si ratio désactivé ou données manquantes
                 real_efficiency_th_per_watt = 0.0
                 real_efficiency_j_per_th = 0.0
-            else:
-                # Calcul simple basé sur le ratio appliqué
+                # Si le ratio est 0.0, la machine est désactivée
+                if current_ratio == 0.0:
+                    final_hashrate = 0.0
+                    final_power = 0
+                    daily_revenue = 0
+                else:
+                    # Appeler l'endpoint d'efficacité pour obtenir les données réelles
+                    from ..routes.efficiency import get_machine_efficiency_at_ratio
+                    efficiency_response = await get_machine_efficiency_at_ratio(template.id, current_ratio, db)
+                    
+                    if efficiency_response and efficiency_response.get("effective_hashrate") and efficiency_response.get("power_consumption"):
+                        real_hashrate = float(efficiency_response["effective_hashrate"])
+                        real_power = int(efficiency_response["power_consumption"])
+                        real_efficiency_th_per_watt = real_hashrate / real_power if real_power > 0 else 0.0
+                        real_efficiency_j_per_th = real_power / real_hashrate if real_hashrate > 0 else 0.0
+                        
+                        # Le revenu est maintenant calculé globalement pour le site entier
+                        # basé sur les accepted shares, pas individuellement par machine
+                        daily_revenue = 0
+                        
+                        # Utiliser les données réelles
+                        final_hashrate = real_hashrate
+                        final_power = real_power
+                    else:
+                        # Pas de données d'efficacité disponibles pour ce ratio
+                        # Fallback: utiliser nominal
+                        final_hashrate = float(template.hashrate_nominal) * current_ratio
+                        final_power = float(template.power_nominal) * current_ratio
+                        if final_power > 0 and final_hashrate > 0:
+                            real_efficiency_th_per_watt = final_hashrate / final_power
+                            real_efficiency_j_per_th = final_power / final_hashrate
+                        # Le revenu est maintenant calculé globalement pour le site entier
+                        daily_revenue = 0
+            except HTTPException:
+                # Fallback sur nominal si erreur API d'efficacité
                 final_hashrate = float(template.hashrate_nominal) * current_ratio
                 final_power = float(template.power_nominal) * current_ratio
-                
-                # Calculer l'efficacité
                 if final_power > 0 and final_hashrate > 0:
                     real_efficiency_th_per_watt = final_hashrate / final_power
                     real_efficiency_j_per_th = final_power / final_hashrate
-                else:
-                    real_efficiency_th_per_watt = 0.0
-                    real_efficiency_j_per_th = 0.0
-                
-                # IMPORTANT: Utiliser EXACTEMENT la même logique que l'optimisation fine
-                # Les revenus individuels sont calculés proportionnellement au ratio appliqué
-                # mais basés sur les accepted shares, pas sur le TH/s
+                # Le revenu est maintenant calculé globalement pour le site entier
                 daily_revenue = 0
-                
-                # Source des shares: instance > template (MÊME PRIORITÉ que l'optimisation fine)
-                base_shares = None
-                if instance.accepted_shares_24h is not None:
-                    base_shares = float(instance.accepted_shares_24h)
-                elif template.accepted_shares_24h is not None:
-                    base_shares = float(template.accepted_shares_24h)
-                
-                if base_shares is not None:
-                    try:
-                        # Récupérer la difficulté du réseau
-                        import requests
-                        difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
-                        difficulty_response.raise_for_status()
-                        network_difficulty = float(difficulty_response.text)
-                        
-                        # Récupérer la récompense de bloc
-                        block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
-                        block_reward_response.raise_for_status()
-                        coinbase_reward = float(block_reward_response.text)
-                        
-                        # Calculer le revenu avec la formule CRC = C × S/D
-                        # IMPORTANT: Utiliser EXACTEMENT la même logique que l'optimisation fine
-                        # accepted_shares_24h est par unité; multiplier par current_ratio et par quantité
-                        machine_shares = base_shares * current_ratio * instance.quantity
-                        btc_earned_24h = (coinbase_reward * machine_shares) / network_difficulty
-                        
-                        # Récupérer le prix Bitcoin depuis le cache
-                        from ..services.market_cache import MarketCacheService
-                        cache_service = MarketCacheService(db)
-                        market_data = cache_service.get_market_data()
-                        bitcoin_price = market_data.get("bitcoin_price_cad")
-                        
-                        if bitcoin_price is not None:
-                            daily_revenue = btc_earned_24h * bitcoin_price
-                        else:
-                            # Prix Bitcoin indisponible
-                            daily_revenue = 0
-                    except (requests.exceptions.RequestException, requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
-                        # En cas d'erreur de connectivité réseau, revenu non calculable
-                        daily_revenue = 0
-                    except Exception:
-                        # En cas d'erreur générale, revenu non calculable
-                        daily_revenue = 0
+            except Exception as e:
+                # En cas d'erreur technique, retourner une erreur
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Erreur lors de la récupération des données d'efficacité pour le ratio {current_ratio}: {str(e)}"
+                )
             
             # Créer une ligne pour chaque machine individuelle
             for i in range(instance.quantity):
@@ -987,7 +945,7 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                 
                 total_hashrate += final_hashrate
                 total_power += final_power
-                # total_revenue est maintenant calculé globalement basé sur les accepted shares
+                total_revenue += daily_revenue
         
         # Trier par efficacité énergétique (J/TH) - plus bas est meilleur
         machines_data.sort(key=lambda x: x.get("efficiency_j_per_th", float("inf")))
@@ -1025,16 +983,10 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                     machine_cost = daily_power_kwh * electricity_tier2_rate
             
             machine["daily_cost"] = machine_cost
-            # Note: daily_revenue est 0 car les revenus sont maintenant calculés globalement pour le site entier
-            # basé sur les accepted shares, pas individuellement par machine
             machine["daily_profit"] = machine["daily_revenue"] - machine_cost
             total_cost += machine_cost
         
         total_profit = total_daily_revenue - total_cost
-        # Maintenant que total_cost est connu, finaliser l'affichage du profit
-        profit_display = (
-            "N/A" if (total_daily_revenue == 0 and calculation_details.get("note")) else round(total_profit, 2)
-        )
         
         return {
             "site_name": site.name,
@@ -1046,14 +998,19 @@ async def get_site_summary(site_id: int, db: Session = Depends(get_db)):
                 "tier2_rate_is_fallback": site.electricity_tier2_rate is None,
                 "tier1_limit_is_fallback": site.electricity_tier1_limit is None
             },
-            "revenue_calculation_note": "Revenus non calculables - configurez les accepted shares pour vos machines dans l'interface d'édition" if revenue_display == "N/A" else "Les revenus sont calculés globalement pour le site entier basé sur les accepted shares (CRC = C × S/D), pas individuellement par machine. Les machines individuelles montrent seulement leurs coûts d'électricité.",
             "machines": machines_data,
             "total_hashrate": total_hashrate,
             "total_power": total_power,
-            "total_revenue": revenue_display,
+            "total_revenue": total_daily_revenue,
             "total_cost": total_cost,
-            "total_profit": profit_display,
-            "calculation_details": calculation_details
+            "total_profit": total_profit,
+            "calculation_details": {
+                "accepted_shares_24h": accepted_shares_24h,
+                "network_difficulty": network_difficulty,
+                "coinbase_reward_btc": coinbase_reward,
+                "bitcoin_price_cad": bitcoin_price_cad,
+                "btc_earned_24h": btc_earned_24h,
+            }
         } 
     
     except HTTPException:
@@ -1214,87 +1171,6 @@ async def apply_manual_ratio(site_id: int, ratio_data: dict, db: Session = Depen
         "ratio": ratio,
         "optimization_type": optimization_type
     }
-
-@router.post("/sites/{site_id}/machines/{machine_id}/apply-individual-optimization")
-async def apply_individual_machine_optimization(
-    site_id: int, 
-    machine_id: int, 
-    optimization_data: dict, 
-    db: Session = Depends(get_db)
-):
-    """
-    Applique l'optimisation individuelle à une machine spécifique
-    """
-    try:
-        # Vérifier que le site et la machine existent
-        site = db.query(models.MiningSite).filter(models.MiningSite.id == site_id).first()
-        if not site:
-            raise HTTPException(status_code=404, detail="Site non trouvé")
-        
-        machine = db.query(models.SiteMachineInstance).filter(
-            models.SiteMachineInstance.id == machine_id,
-            models.SiteMachineInstance.site_id == site_id
-        ).first()
-        
-        if not machine:
-            raise HTTPException(status_code=404, detail="Machine non trouvée dans ce site")
-        
-        # Récupérer le ratio optimal depuis les données
-        optimal_ratio = optimization_data.get("optimal_ratio")
-        optimization_type = optimization_data.get("type", "economic")
-        
-        if optimal_ratio is None:
-            raise HTTPException(status_code=400, detail="Ratio optimal manquant")
-        
-        # Vérifier que le ratio est dans les limites
-        if optimal_ratio < 0.5 or optimal_ratio > 1.5:
-            raise HTTPException(status_code=400, detail="Ratio doit être entre 0.5 et 1.5")
-        
-        # Vérifier que le ratio est valide pour cette machine
-        template = db.query(models.MachineTemplate).filter(
-            models.MachineTemplate.id == machine.template_id,
-            models.MachineTemplate.is_active == True
-        ).first()
-        
-        if template:
-            try:
-                from ..routes.efficiency import get_machine_efficiency_at_ratio
-                efficiency_response = await get_machine_efficiency_at_ratio(template.id, optimal_ratio, db)
-                
-                if not efficiency_response or not efficiency_response.get("effective_hashrate") or not efficiency_response.get("power_consumption"):
-                    raise HTTPException(
-                        status_code=400, 
-                        detail=f"Ratio {optimal_ratio} non valide pour cette machine. Vérifiez les limites disponibles."
-                    )
-            except Exception as e:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Erreur lors de la validation du ratio: {str(e)}"
-                )
-        
-        # Appliquer le ratio optimal à la machine
-        if optimal_ratio == 1.0:
-            machine.optimal_ratio = None
-            machine.ratio_type = 'nominal'
-        else:
-            machine.optimal_ratio = optimal_ratio
-            machine.ratio_type = 'optimal'
-        
-        db.commit()
-        
-        return {
-            "message": f"Optimisation {optimization_type} appliquée avec succès à la machine {machine.custom_name or template.model}",
-            "machine_id": machine_id,
-            "site_id": site_id,
-            "optimal_ratio": optimal_ratio,
-            "optimization_type": optimization_type,
-            "machine_name": machine.custom_name or template.model
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de l'application de l'optimisation: {str(e)}")
 
 @router.get("/sites/{site_id}/available-ratios")
 async def get_site_available_ratios(site_id: int, db: Session = Depends(get_db)):
@@ -1735,35 +1611,13 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
             # Trier les machines par efficacité (TH/s/W) - les plus efficaces en premier
             machine_performances.sort(key=lambda x: x["efficiency"], reverse=True)
             
-            # Calculer les revenus totaux basés sur les accepted shares
+            # Calculer les revenus totaux
             daily_revenue = 0
-            try:
-                # Récupérer les accepted shares avec fallback
-                total_accepted_shares, shares_source = get_accepted_shares_with_fallback(site, db)
-                
-                if total_accepted_shares is not None:
-                    # Récupérer la difficulté du réseau
-                    import requests
-                    difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
-                    difficulty_response.raise_for_status()
-                    network_difficulty = float(difficulty_response.text)
-                    
-                    # Récupérer la récompense de bloc
-                    block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
-                    block_reward_response.raise_for_status()
-                    coinbase_reward = float(block_reward_response.text)
-                    
-                    # Calculer le revenu avec la formule CRC = C × S/D
-                    btc_earned_24h = (coinbase_reward * total_accepted_shares) / network_difficulty
-                    
-                    if bitcoin_price is not None:
-                        daily_revenue = btc_earned_24h * bitcoin_price
-                else:
-                    # Pas d'accepted shares configurées
-                    daily_revenue = None
-            except Exception:
-                # En cas d'erreur, revenu non calculable
-                daily_revenue = None
+            if fpps_rate is not None and bitcoin_price is not None:
+                fpps_sats_per_day = int(float(fpps_rate) * 100000000)
+                sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
+                hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                daily_revenue = hourly_revenue_cad * 24
             
             # Calculer les coûts d'électricité avec paliers
             total_cost = 0
@@ -1792,10 +1646,7 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
                 total_cost += machine_cost
             
             # Calculer le profit total
-            if daily_revenue is None:
-                daily_profit = None
-            else:
-                daily_profit = daily_revenue - total_cost
+            daily_profit = daily_revenue - total_cost
             
             # Stocker ce résultat pour le CSV
             combination_result = {
@@ -1804,43 +1655,28 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
                 "machine_performances": machine_performances,
                 "total_hashrate": total_hashrate,
                 "total_power": total_power,
-                "daily_revenue": "N/A" if daily_revenue is None else daily_revenue,
+                "daily_revenue": daily_revenue,
                 "daily_cost": total_cost,
-                "daily_profit": "N/A" if daily_profit is None else daily_profit
+                "daily_profit": daily_profit
             }
             all_results.append(combination_result)
             
             # Garder la meilleure combinaison
-            if daily_profit is not None and daily_profit > best_profit:
+            if daily_profit > best_profit:
                 best_profit = daily_profit
                 best_combination = machine_ratio_map
                 best_results = {
                     "machine_performances": machine_performances,
                     "total_hashrate": total_hashrate,
                     "total_power": total_power,
-                    "daily_revenue": "N/A" if daily_revenue is None else daily_revenue,
+                    "daily_revenue": daily_revenue,
                     "daily_cost": total_cost,
-                    "daily_profit": "N/A" if daily_profit is None else daily_profit
+                    "daily_profit": daily_profit
                 }
                 
         except Exception as e:
             print(f"Erreur lors du test de la combinaison {combination}: {str(e)}")
             continue
-    
-    # Si aucune combinaison optimale basée sur les profits n'a été trouvée (pas de shares configurées)
-    # sélectionner la combinaison avec le meilleur hashrate total
-    if best_combination is None and all_results:
-        best_hashrate_result = max(all_results, key=lambda x: x["total_hashrate"])
-        best_combination = best_hashrate_result["machine_ratio_map"]
-        best_results = {
-            "machine_performances": best_hashrate_result["machine_performances"],
-            "total_hashrate": best_hashrate_result["total_hashrate"],
-            "total_power": best_hashrate_result["total_power"],
-            "daily_revenue": best_hashrate_result["daily_revenue"],
-            "daily_cost": best_hashrate_result["daily_cost"],
-            "daily_profit": best_hashrate_result["daily_profit"]
-        }
-        best_profit = "N/A"  # Pas de profit calculable sans shares
     
     if best_combination is None:
         raise HTTPException(status_code=400, detail="Impossible de calculer l'optimisation globale")
@@ -1855,24 +1691,17 @@ async def global_site_optimization(site_id: int, db: Session = Depends(get_db)):
     
     instances_updated = 0
     
-    # Déterminer le message selon la disponibilité des shares
-    if best_profit == "N/A":
-        message = f"Optimisation globale calculée pour {len(machines)} machine(s) - ⚠️ Aucun profit calculable car pas d'accepted shares configurées. Configurez des shares pour voir les profits optimaux."
-    else:
-        message = f"Optimisation globale calculée pour {len(machines)} machine(s) - Prêt à appliquer"
-    
     return {
-        "message": message,
+        "message": f"Optimisation globale calculée pour {len(machines)} machine(s) - Prêt à appliquer",
         "site_id": site_id,
         "site_name": site.name,
         "currency": preferred_currency,
         "combinations_tested": len(all_combinations),
-        "best_profit": "N/A" if best_profit == float('-inf') else best_profit,
+        "best_profit": best_profit,
         "best_combination": best_combination,
         "results": best_results,
         "all_results": all_results,  # Tous les résultats pour le CSV
-        "instances_updated": instances_updated,
-        "shares_warning": best_profit == "N/A"
+        "instances_updated": instances_updated
     } 
 
 @router.post("/sites/{site_id}/fine-optimization")
@@ -2051,35 +1880,15 @@ async def fine_site_optimization(
                     total_hashrate += hashrate
                     total_power += power
             
-            # Calculer le profit total basé sur les accepted shares
+            # Calculer le profit total
             daily_revenue = 0
-            try:
-                # Récupérer les accepted shares avec fallback
-                total_accepted_shares, shares_source = get_accepted_shares_with_fallback(site, db)
+            if fpps_rate is not None:
+                fpps_sats_per_day = int(float(fpps_rate) * 100000000)
+                sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
                 
-                if total_accepted_shares is not None:
-                    # Récupérer la difficulté du réseau
-                    import requests
-                    difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
-                    difficulty_response.raise_for_status()
-                    network_difficulty = float(difficulty_response.text)
-                    
-                    # Récupérer la récompense de bloc
-                    block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
-                    block_reward_response.raise_for_status()
-                    coinbase_reward = float(block_reward_response.text)
-                    
-                    # Calculer le revenu avec la formule CRC = C × S/D
-                    btc_earned_24h = (coinbase_reward * total_accepted_shares) / network_difficulty
-                    
-                    if bitcoin_price is not None:
-                        daily_revenue = btc_earned_24h * bitcoin_price
-                else:
-                    # Pas d'accepted shares configurées
-                    daily_revenue = None
-            except Exception:
-                # En cas d'erreur, revenu non calculable
-                daily_revenue = None
+                if bitcoin_price is not None:
+                    hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                    daily_revenue = hourly_revenue_cad * 24
             
             # Calculer les coûts d'électricité avec paliers
             daily_power_kwh = (total_power * 24) / 1000
@@ -2094,11 +1903,7 @@ async def fine_site_optimization(
                     tier2_cost = (daily_power_kwh - electricity_tier1_limit) * electricity_tier2_rate
                     daily_electricity_cost = tier1_cost + tier2_cost
             
-            # Calculer le profit total
-            if daily_revenue is None:
-                daily_profit = None
-            else:
-                daily_profit = daily_revenue - daily_electricity_cost
+            daily_profit = daily_revenue - daily_electricity_cost
             
             coarse_results.append({
                 "combination": combination,
@@ -2106,9 +1911,9 @@ async def fine_site_optimization(
                 "machine_performances": machine_performances,
                 "total_hashrate": total_hashrate,
                 "total_power": total_power,
-                "daily_revenue": "N/A" if daily_revenue is None else daily_revenue,
+                "daily_revenue": daily_revenue,
                 "daily_electricity_cost": daily_electricity_cost,
-                "daily_profit": "N/A" if daily_profit is None else daily_profit
+                "daily_profit": daily_profit
             })
             
         except Exception as e:
@@ -2116,15 +1921,8 @@ async def fine_site_optimization(
             continue
     
     # Identifier les top 5 combinaisons prometteuses
-    # Filtrer les résultats avec profit calculable, puis trier
-    valid_results = [r for r in coarse_results if r["daily_profit"] is not None and r["daily_profit"] != "N/A"]
-    if valid_results:
-        valid_results.sort(key=lambda x: x["daily_profit"], reverse=True)
-        top_combinations = valid_results[:5]
-    else:
-        # Si aucun profit calculable, utiliser les résultats avec le meilleur hashrate
-        coarse_results.sort(key=lambda x: x["total_hashrate"], reverse=True)
-        top_combinations = coarse_results[:5]
+    coarse_results.sort(key=lambda x: x["daily_profit"], reverse=True)
+    top_combinations = coarse_results[:5]
     
     print(f"Top 5 combinaisons grossières identifiées pour l'optimisation fine...")
     
@@ -2138,21 +1936,16 @@ async def fine_site_optimization(
         fine_ranges = []
         for i, ratio in enumerate(top_combo['combination']):
             if ratio > 0:  # Ignorer les machines désactivées
-                # Utiliser le range théorique standard (0.5 à 1.5) pour l'optimisation fine
-                # Créer le range fin autour du ratio optimal
-                min_ratio = max(0.5, ratio - fine_range)
-                max_ratio = min(1.5, ratio + fine_range)
+                # Créer un range fin autour du ratio prometteur
+                min_ratio = max(0.5, ratio - fine_range)  # Minimum 0.5
+                max_ratio = min(1.5, ratio + fine_range)  # Maximum 1.5
                 
-                # Générer les ratios fins avec le step demandé
+                # Générer les ratios fins
                 fine_ratios = []
                 current_ratio = min_ratio
                 while current_ratio <= max_ratio:
                     fine_ratios.append(round(current_ratio, 2))
                     current_ratio += fine_step
-                
-                # Si aucun ratio dans le range, utiliser le ratio original
-                if not fine_ratios:
-                    fine_ratios = [ratio]
                 
                 fine_ranges.append(fine_ratios)
             else:
@@ -2189,10 +1982,12 @@ async def fine_site_optimization(
                             "status": "disabled"
                         })
                     else:
-                        # IMPORTANT: TH/s et puissance sont affichés proportionnellement au ratio
-                        # mais n'interviennent PAS dans les calculs de profit (uniquement pour l'affichage)
-                        hashrate = float(template.hashrate_nominal) * ratio
-                        power = float(template.power_nominal) * ratio
+                        # Obtenir l'efficacité pour ce ratio
+                        from ..routes.efficiency import get_machine_efficiency_at_ratio
+                        efficiency_result = await get_machine_efficiency_at_ratio(template.id, ratio, db)
+                        
+                        hashrate = float(efficiency_result["effective_hashrate"])
+                        power = int(efficiency_result["power_consumption"])
                         efficiency = hashrate / power if power > 0 else 0.0
                         
                         machine_performances.append({
@@ -2209,57 +2004,15 @@ async def fine_site_optimization(
                         total_hashrate += hashrate
                         total_power += power
                 
-                # Calculer le profit total basé UNIQUEMENT sur les accepted shares (pas sur le TH/s)
-                # Les TH/s et puissance sont affichés proportionnellement au ratio mais n'interviennent pas dans les calculs de profit
+                # Calculer le profit total
                 daily_revenue = 0
-                try:
-                    # Calculer le revenu uniquement si on a des machines actives (ratio > 0)
-                    active_machines = [m for m in machines if machine_ratio_map[m.id] > 0]
+                if fpps_rate is not None:
+                    fpps_sats_per_day = int(float(fpps_rate) * 100000000)
+                    sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
                     
-                    if active_machines:
-                        # Calculer les accepted shares ajustées par le ratio courant
-                        total_accepted_shares = 0.0
-                        for machine in active_machines:
-                            template = machine_templates[machine.id]
-                            ratio = machine_ratio_map[machine.id]
-                            
-                            # Source des shares: instance > template
-                            base_shares = None
-                            if machine.accepted_shares_24h is not None:
-                                base_shares = float(machine.accepted_shares_24h)
-                            elif template.accepted_shares_24h is not None:
-                                base_shares = float(template.accepted_shares_24h)
-                            
-                            # Ajouter la contribution si disponible (par unité), multipliée par quantité et ratio
-                            if base_shares is not None:
-                                total_accepted_shares += base_shares * ratio * machine.quantity
-                        
-                        if total_accepted_shares > 0:
-                            # Récupérer la difficulté du réseau
-                            import requests
-                            difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
-                            difficulty_response.raise_for_status()
-                            network_difficulty = float(difficulty_response.text)
-                            
-                            # Récupérer la récompense de bloc
-                            block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
-                            block_reward_response.raise_for_status()
-                            coinbase_reward = float(block_reward_response.text)
-                            
-                            # Calculer le revenu avec la formule CRC = C × S/D (uniquement avec les shares)
-                            btc_earned_24h = (coinbase_reward * total_accepted_shares) / network_difficulty
-                            
-                            if bitcoin_price is not None:
-                                daily_revenue = btc_earned_24h * bitcoin_price
-                        else:
-                            # Pas d'accepted shares configurées
-                            daily_revenue = None
-                    else:
-                        # Aucune machine active, donc aucun revenu
-                        daily_revenue = 0
-                except Exception:
-                    # En cas d'erreur, revenu non calculable
-                    daily_revenue = None
+                    if bitcoin_price is not None:
+                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                        daily_revenue = hourly_revenue_cad * 24
                 
                 # Calculer les coûts d'électricité avec paliers
                 daily_power_kwh = (total_power * 24) / 1000
@@ -2274,11 +2027,7 @@ async def fine_site_optimization(
                         tier2_cost = (daily_power_kwh - electricity_tier1_limit) * electricity_tier2_rate
                         daily_electricity_cost = tier1_cost + tier2_cost
                 
-                # Calculer le profit total
-                if daily_revenue is None:
-                    daily_profit = None
-                else:
-                    daily_profit = daily_revenue - daily_electricity_cost
+                daily_profit = daily_revenue - daily_electricity_cost
                 
                 fine_results.append({
                     "combination": fine_combo,
@@ -2286,9 +2035,9 @@ async def fine_site_optimization(
                     "machine_performances": machine_performances,
                     "total_hashrate": total_hashrate,
                     "total_power": total_power,
-                    "daily_revenue": "N/A" if daily_revenue is None else daily_revenue,
+                    "daily_revenue": daily_revenue,
                     "daily_electricity_cost": daily_electricity_cost,
-                    "daily_profit": "N/A" if daily_profit is None else daily_profit,
+                    "daily_profit": daily_profit,
                     "optimization_type": "fine"
                 })
                 
@@ -2297,24 +2046,12 @@ async def fine_site_optimization(
                 continue
     
     # Combiner tous les résultats et trouver le meilleur
-    # Ne retourner que les résultats fins pour refléter le pas demandé (fine_step)
-    all_results = fine_results
+    all_results = coarse_results + fine_results
     
     if not all_results:
         raise HTTPException(status_code=400, detail="Aucun résultat d'optimisation trouvé")
     
-    # Trier les résultats en gérant les "N/A"
-    # Filtrer d'abord les résultats avec profit calculable
-    valid_results = [r for r in all_results if r["daily_profit"] != "N/A"]
-    if valid_results:
-        # Trier par profit décroissant
-        valid_results.sort(key=lambda x: x["daily_profit"], reverse=True)
-        # Ajouter les résultats "N/A" à la fin
-        na_results = [r for r in all_results if r["daily_profit"] == "N/A"]
-        all_results = valid_results + na_results
-    else:
-        # Si aucun profit calculable, trier par hashrate
-        all_results.sort(key=lambda x: x["total_hashrate"], reverse=True)
+    all_results.sort(key=lambda x: x["daily_profit"], reverse=True)
     
     best_result = all_results[0]
     
@@ -2325,15 +2062,9 @@ async def fine_site_optimization(
     
     db.commit()
     
-    # Déterminer le message selon la disponibilité des shares
-    if best_result["daily_profit"] == "N/A":
-        message = f"Optimisation fine calculée pour {len(machines)} machine(s) - ⚠️ Aucun profit calculable car pas d'accepted shares configurées. Configurez des shares pour voir les profits optimaux."
-    else:
-        message = f"Optimisation fine calculée pour {len(machines)} machine(s) - Prêt à appliquer"
-    
     # Préparer la réponse
     response = {
-        "message": message,
+        "message": f"Optimisation fine calculée pour {len(machines)} machine(s) - Prêt à appliquer",
         "site_id": site_id,
         "site_name": site.name,
         "currency": preferred_currency,
@@ -2348,8 +2079,7 @@ async def fine_site_optimization(
             "total_power": best_result["total_power"],
             "machine_performances": best_result["machine_performances"]
         },
-        "all_results": all_results,
-        "shares_warning": best_result["daily_profit"] == "N/A"
+        "all_results": all_results
     }
     
     return response
@@ -2365,15 +2095,8 @@ async def perform_fine_optimization_from_global_results(
     
     # Récupérer les top 5 combinaisons des résultats globaux
     all_global_results = global_results["all_results"]
-    # Trier en gérant les "N/A"
-    valid_results = [r for r in all_global_results if r["daily_profit"] != "N/A"]
-    if valid_results:
-        valid_results.sort(key=lambda x: x["daily_profit"], reverse=True)
-        top_combinations = valid_results[:5]
-    else:
-        # Si aucun profit calculable, trier par hashrate
-        all_global_results.sort(key=lambda x: x["total_hashrate"], reverse=True)
-        top_combinations = all_global_results[:5]
+    all_global_results.sort(key=lambda x: x["daily_profit"], reverse=True)
+    top_combinations = all_global_results[:5]
     
     print(f"Top 5 combinaisons grossières identifiées pour l'optimisation fine...")
     
@@ -2457,35 +2180,14 @@ async def perform_fine_optimization_from_global_results(
                         total_hashrate += hashrate
                         total_power += power
                 
-                # Calculer le profit total basé sur les accepted shares
+                # Calculer le profit total
                 daily_revenue = 0
-                try:
-                    # Récupérer les accepted shares avec fallback
-                    total_accepted_shares, shares_source = get_accepted_shares_with_fallback(site, db)
-                    
-                    if total_accepted_shares is not None:
-                        # Récupérer la difficulté du réseau
-                        import requests
-                        difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
-                        difficulty_response.raise_for_status()
-                        network_difficulty = float(difficulty_response.text)
-                        
-                        # Récupérer la récompense de bloc
-                        block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
-                        block_reward_response.raise_for_status()
-                        coinbase_reward = float(block_reward_response.text)
-                        
-                        # Calculer le revenu avec la formule CRC = C × S/D
-                        btc_earned_24h = (coinbase_reward * total_accepted_shares) / network_difficulty
-                        
-                        if bitcoin_price is not None:
-                            daily_revenue = btc_earned_24h * bitcoin_price
-                    else:
-                        # Pas d'accepted shares configurées
-                        daily_revenue = None
-                except Exception:
-                    # En cas d'erreur, revenu non calculable
-                    daily_revenue = None
+                if fpps_rate is not None:
+                    fpps_sats_per_day = int(float(fpps_rate) * 100000000)
+                    sats_per_hour = int(total_hashrate * fpps_sats_per_day / 24)
+                    if bitcoin_price is not None:
+                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
+                        daily_revenue = hourly_revenue_cad * 24
                 
                 # Calculer les coûts d'électricité avec paliers
                 daily_power_kwh = (total_power * 24) / 1000
@@ -2499,11 +2201,7 @@ async def perform_fine_optimization_from_global_results(
                         tier2_cost = (daily_power_kwh - electricity_tier1_limit) * electricity_tier2_rate
                         daily_electricity_cost = tier1_cost + tier2_cost
                 
-                # Calculer le profit total
-                if daily_revenue is None:
-                    daily_profit = None
-                else:
-                    daily_profit = daily_revenue - daily_electricity_cost
+                daily_profit = daily_revenue - daily_electricity_cost
                 
                 fine_results.append({
                     "combination": fine_combo,
@@ -2511,9 +2209,9 @@ async def perform_fine_optimization_from_global_results(
                     "machine_performances": machine_performances,
                     "total_hashrate": total_hashrate,
                     "total_power": total_power,
-                    "daily_revenue": "N/A" if daily_revenue is None else daily_revenue,
+                    "daily_revenue": daily_revenue,
                     "daily_electricity_cost": daily_electricity_cost,
-                    "daily_profit": "N/A" if daily_profit is None else daily_profit,
+                    "daily_profit": daily_profit,
                     "optimization_type": "fine"
                 })
                 
@@ -2522,18 +2220,8 @@ async def perform_fine_optimization_from_global_results(
                 continue
     
     # Combiner les résultats globaux et fins
-    # Ne retourner que les résultats fins pour refléter le pas demandé (fine_step)
-    all_results = fine_results
-    # Trier en gérant les "N/A"
-    valid_results = [r for r in all_results if r["daily_profit"] != "N/A"]
-    if valid_results:
-        valid_results.sort(key=lambda x: x["daily_profit"], reverse=True)
-        # Ajouter les résultats "N/A" à la fin
-        na_results = [r for r in all_results if r["daily_profit"] == "N/A"]
-        all_results = valid_results + na_results
-    else:
-        # Si aucun profit calculable, trier par hashrate
-        all_results.sort(key=lambda x: x["total_hashrate"], reverse=True)
+    all_results = all_global_results + fine_results
+    all_results.sort(key=lambda x: x["daily_profit"], reverse=True)
     
     if not all_results:
         raise HTTPException(status_code=400, detail="Aucun résultat d'optimisation trouvé")
@@ -2559,15 +2247,9 @@ async def perform_fine_optimization_from_global_results(
     
     db.commit()
     
-    # Déterminer le message selon la disponibilité des shares
-    if best_result["daily_profit"] == "N/A":
-        message = f"Optimisation fine appliquée avec succès à {len(machines)} machine(s) - ⚠️ Aucun profit calculable car pas d'accepted shares configurées. Configurez des shares pour voir les profits optimaux."
-    else:
-        message = f"Optimisation fine appliquée avec succès à {len(machines)} machine(s)"
-    
     # Préparer la réponse
     response = {
-        "message": message,
+        "message": f"Optimisation fine appliquée avec succès à {len(machines)} machine(s)",
         "site_id": site.id,
         "site_name": site.name,
         "combinations_tested": len(all_results),
@@ -2581,8 +2263,7 @@ async def perform_fine_optimization_from_global_results(
             "total_power": best_result["total_power"],
             "machine_performances": best_result["machine_performances"]
         },
-        "all_results": all_results,
-        "shares_warning": best_result["daily_profit"] == "N/A"
+        "all_results": all_results
     }
     
     return response 

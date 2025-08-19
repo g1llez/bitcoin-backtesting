@@ -86,8 +86,10 @@ function initializeApp() {
     
     // Attendre que les graphiques soient complètement initialisés avant de charger les sites
     setTimeout(() => {
-        // Charger les sites et machines (sélectionnera automatiquement le premier site)
-        loadSitesAndMachines(true);
+        // Charger l'arbre sans auto-sélection pour afficher la vue globale par défaut
+        loadSitesAndMachines(false).then(() => {
+            showGlobalOverview();
+        });
     }, 200);
     
     // Initialize navigation handling
@@ -128,6 +130,111 @@ function showWelcomeMessage() {
     selectedObjectCard.style.display = 'block';
 }
 
+// Global Sites Overview
+async function showGlobalOverview() {
+    // Réinitialiser la sélection d'objet
+    currentObjectType = null;
+    currentObjectId = null;
+    currentObjectData = null;
+
+    // Masquer la section backtest
+    const backtestSection = document.getElementById('backtestSection');
+    if (backtestSection) backtestSection.style.display = 'none';
+
+    // Masquer les sections spécifiques à un objet
+    const selectedObjectCard = document.getElementById('selectedObjectCard');
+    if (selectedObjectCard) selectedObjectCard.style.display = 'none';
+    const siteSummaryCard = document.getElementById('siteSummaryCard');
+    if (siteSummaryCard) siteSummaryCard.style.display = 'none';
+
+    // Masquer les 4 cartes spécifiques à la sélection d'une machine
+    const chartsSection = document.getElementById('chartsSection');
+    if (chartsSection) chartsSection.style.display = 'none';
+    const optimizationSection = document.getElementById('optimizationSection');
+    if (optimizationSection) optimizationSection.style.display = 'none';
+
+    const overview = document.getElementById('globalSitesOverviewCard');
+    if (overview) overview.style.display = 'block';
+
+    await refreshGlobalSitesOverview();
+}
+
+async function refreshGlobalSitesOverview() {
+    const tbody = document.getElementById('globalSitesOverviewTableBody');
+    if (!tbody) return;
+
+    // Indicateur de chargement
+    tbody.innerHTML = `<tr><td colspan="7"><span class="text-muted">Chargement...</span></td></tr>`;
+
+    try {
+        const sites = await apiClient.get(`/sites`);
+
+        // Pour chaque site, récupérer sa synthèse pour afficher des totaux
+        const rows = [];
+        for (const site of sites) {
+            try {
+                const summary = await apiClient.get(`/sites/${site.id}/summary`).catch(() => null);
+                const machineCount = Array.isArray(summary?.machines) ? summary.machines.length : 0;
+                const totalHashrate = summary?.total_hashrate ?? 0;
+                const totalRevenue = summary?.total_revenue ?? null;
+                const totalCost = summary?.total_cost ?? null;
+                const totalProfit = summary?.total_profit ?? null;
+
+                rows.push({
+                    id: site.id,
+                    name: site.name,
+                    currency: site.preferred_currency || null,
+                    machineCount,
+                    totalHashrate,
+                    totalRevenue,
+                    totalCost,
+                    totalProfit
+                });
+            } catch (_) {
+                rows.push({
+                    id: site.id,
+                    name: site.name,
+                    currency: site.preferred_currency || null,
+                    machineCount: null,
+                    totalHashrate: null,
+                    totalRevenue: null,
+                    totalCost: null,
+                    totalProfit: null
+                });
+            }
+        }
+
+        // Rendu des lignes
+        const fmt = window.formatters;
+        const currencyOrNumber = (value, currency) => {
+            if (value === null || value === undefined) return '—';
+            if (currency) return fmt.formatCurrency(value, currency);
+            const num = Number(value);
+            return Number.isFinite(num) ? num.toFixed(2) : '—';
+        };
+
+        tbody.innerHTML = rows.map(r => `
+            <tr>
+                <td>
+                    <a href="#" class="site-link" onclick="selectObject('site', ${r.id})" title="Voir ce site">
+                        ${r.name}
+                        <i class="fas fa-external-link-alt ms-1" style="font-size: 0.8em; opacity: 0.7;"></i>
+                    </a>
+                </td>
+                <td>${r.machineCount ?? '—'}</td>
+                <td>${fmt.formatHashrateTH(r.totalHashrate)}</td>
+                <td>${currencyOrNumber(r.totalRevenue, r.currency)}</td>
+                <td>${currencyOrNumber(r.totalCost, r.currency)}</td>
+                <td>${currencyOrNumber(r.totalProfit, r.currency)}</td>
+            </tr>
+        `).join('');
+
+    } catch (error) {
+        console.error('Error loading global overview:', error);
+        tbody.innerHTML = `<tr><td colspan="7" class="text-danger">Erreur lors du chargement</td></tr>`;
+    }
+}
+
 // Theme Management
 function changeStyle(theme) {
     setTheme(theme);
@@ -139,6 +246,9 @@ function setTheme(theme) {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
 }
+
+// Indicateur d'optimisation fine (badge dédié dans la carte d'optimisation)
+function setOptimizationFineIndicator(isFine) { /* revert: no-op */ }
 
 function updateChartTheme() {
     if (efficiencyChart) {
@@ -193,6 +303,10 @@ async function selectObject(objectType, objectId, objectData = null) {
         }
     }
     
+    // Cacher la vue globale quand on sélectionne un objet
+    const overview = document.getElementById('globalSitesOverviewCard');
+    if (overview) overview.style.display = 'none';
+
     // Update selected object info
     await updateSelectedObjectInfo(objectType, objectId, objectData);
     
@@ -332,6 +446,14 @@ async function updateSelectedObjectInfo(objectType, objectId, objectData) {
             // Mettre à jour les informations du site avec les données reçues
             if (objectData) {
                 await updateSiteInfoDisplay(objectData);
+            } else {
+                // Si pas de données, charger le site explicitement
+                try {
+                    const siteData = await apiClient.get(`/sites/${objectId}`);
+                    await updateSiteInfoDisplay(siteData);
+                } catch (error) {
+                    console.error('Erreur lors du chargement du site:', error);
+                }
             }
             break;
             
@@ -540,6 +662,8 @@ function updateSiteSummaryDisplay(summary) {
                 globalOptimizationBtn.style.display = 'none';
             }
         }
+        // Ajuster les arrondis du premier et dernier bouton visibles
+        updateSiteActionButtonsRounding();
     }
     
     // Vider le tableau
@@ -645,10 +769,10 @@ function updateSiteSummaryDisplay(summary) {
             <td><strong>TOTAL</strong></td>
             <td><strong>${summary.total_hashrate.toFixed(2)} TH/s</strong></td>
             <td><strong>${Math.round(summary.total_power)}W</strong></td>
-            <td><strong>$${summary.total_revenue.toFixed(2)}</strong></td>
-            <td><strong>$${summary.total_cost.toFixed(2)}</strong></td>
-            <td class="${summary.total_profit >= 0 ? 'text-success' : 'text-danger'}">
-                <strong>$${summary.total_profit.toFixed(2)}</strong>
+            <td><strong>${summary.total_revenue === "N/A" ? "N/A" : "$" + summary.total_revenue.toFixed(2)}</strong></td>
+            <td><strong>${summary.total_cost === "N/A" ? "N/A" : "$" + summary.total_cost.toFixed(2)}</strong></td>
+            <td class="${summary.total_profit === "N/A" ? "" : (summary.total_profit >= 0 ? 'text-success' : 'text-danger')}">
+                <strong>${summary.total_profit === "N/A" ? "N/A" : "$" + summary.total_profit.toFixed(2)}</strong>
             </td>
             <td></td>
             <td></td>
@@ -670,6 +794,22 @@ function updateSiteSummaryDisplay(summary) {
     tfoot.innerHTML = footer;
 }
 
+// Ajuste les coins arrondis pour le premier et le dernier bouton visibles dans la btn-group
+function updateSiteActionButtonsRounding() {
+    const group = document.querySelector('#siteSummaryCard .btn-group');
+    if (!group) return;
+    const buttons = Array.from(group.querySelectorAll('.btn'))
+        .filter(btn => btn.offsetParent !== null); // uniquement visibles
+    // Nettoyer
+    buttons.forEach(btn => {
+        btn.classList.remove('rounded-left', 'rounded-right');
+    });
+    if (buttons.length === 0) return;
+    // Appliquer
+    buttons[0].classList.add('rounded-left');
+    buttons[buttons.length - 1].classList.add('rounded-right');
+}
+
 // Fonction supprimée - remplacée par applyOptimalRatios()
 
 // Load Global Site Optimization
@@ -678,6 +818,19 @@ async function loadGlobalOptimization() {
     try {
         if (!currentSiteId) {
             showNotification('Aucun site sélectionné', 'error');
+            return;
+        }
+        
+        // Vérifier d'abord si le site a des accepted shares configurées
+        const siteSummary = await apiClient.get(`/sites/${currentSiteId}/summary`);
+        
+        // Vérifier si des shares sont configurées (soit au niveau du site, soit au niveau des machines)
+        const hasShares = siteSummary.machines && siteSummary.machines.some(machine => 
+            machine.accepted_shares_24h && machine.accepted_shares_24h > 0
+        );
+        
+        if (!hasShares) {
+            showNotification('⚠️ Impossible de calculer l\'optimisation : aucune accepted shares configurée. Configurez des shares pour vos machines avant d\'optimiser.', 'warning');
             return;
         }
         
@@ -690,7 +843,7 @@ async function loadGlobalOptimization() {
         // Mettre à jour la modal avec les résultats
         updateGlobalOptimizationResults(result);
         
-        showNotification(`Optimisation globale terminée! ${result.combinations_tested} combinaisons testées. Profit optimal: $${result.best_profit.toFixed(2)}/jour`, 'success');
+        showNotification(`Optimisation globale terminée! ${result.combinations_tested} combinaisons testées. Profit optimal: ${result.best_profit === "N/A" ? "N/A" : "$" + result.best_profit.toFixed(2) + "/jour"}`, 'success');
         
     } catch (error) {
         console.error('Error performing global optimization:', error);
@@ -773,6 +926,17 @@ function updateGlobalOptimizationResults(result) {
     
     // Mettre à jour le contenu
     modalBody.innerHTML = `
+        ${result.shares_warning ? `
+        <div class="row mb-3">
+            <div class="col-12">
+                <div class="alert alert-warning" role="alert">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <strong>Attention :</strong> ${result.message}
+                </div>
+            </div>
+        </div>
+        ` : ''}
+        
         <div class="row">
             <div class="col-md-6">
                 <h6><i class="fas fa-chart-line"></i> Résumé</h6>
@@ -791,7 +955,7 @@ function updateGlobalOptimizationResults(result) {
                             </tr>
                             <tr>
                                 <td>Profit optimal</td>
-                                <td><strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong></td>
+                                <td><strong class="text-success">${result.best_profit === "N/A" ? "N/A" : "$" + result.best_profit.toFixed(2) + "/jour"}</strong></td>
                             </tr>
                             <tr>
                                 <td>Hashrate total</td>
@@ -909,7 +1073,7 @@ function showGlobalOptimizationResults(result) {
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between">
                                         <span>Profit optimal:</span>
-                                        <strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong>
+                                        <strong class="text-success">${result.best_profit === "N/A" ? "N/A" : "$" + result.best_profit.toFixed(2) + "/jour"}</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between">
                                         <span>Hashrate total:</span>
@@ -1087,9 +1251,35 @@ function showFineOptimizationConfig(siteId, globalResults = null) {
 
 // Start Fine Optimization
 async function startFineOptimization(siteId, globalResults = null) {
+    console.log('=== startFineOptimization appelée ===');
+    console.log('siteId:', siteId);
+    console.log('globalResults:', globalResults);
+    
     // Récupérer les paramètres
     const fineRange = parseFloat(document.getElementById('fineRange').value);
     const fineStep = parseFloat(document.getElementById('fineStep').value);
+    
+    console.log('fineRange:', fineRange);
+    console.log('fineStep:', fineStep);
+    
+    // Vérifier d'abord si le site a des accepted shares configurées
+    try {
+        const siteSummary = await apiClient.get(`/sites/${siteId}/summary`);
+        
+        // Vérifier si des shares sont configurées (soit au niveau du site, soit au niveau des machines)
+        const hasShares = siteSummary.machines && siteSummary.machines.some(machine => 
+            machine.accepted_shares_24h && machine.accepted_shares_24h > 0
+        );
+        
+        if (!hasShares) {
+            showNotification('⚠️ Impossible de calculer l\'optimisation : aucune accepted shares configurée. Configurez des shares pour vos machines avant d\'optimiser.', 'warning');
+            return;
+        }
+    } catch (error) {
+        console.error('Erreur lors de la vérification des shares:', error);
+        showNotification('Erreur lors de la vérification des shares', 'error');
+        return;
+    }
     
     // Fermer la modal de configuration
     const configModal = bootstrap.Modal.getInstance(document.getElementById('fineOptimizationConfigModal'));
@@ -1117,8 +1307,12 @@ async function startFineOptimization(siteId, globalResults = null) {
             result.global_results = globalResults;
         }
         
+        console.log('Résultat de l\'optimisation fine reçu:', result);
+        
         // Mettre à jour les résultats avec l'optimisation fine
+        console.log('Appel de updateFineOptimizationResults...');
         updateFineOptimizationResults(result);
+        console.log('updateFineOptimizationResults terminé');
         
         showNotification('Optimisation fine terminée avec succès !', 'success');
         
@@ -1189,18 +1383,25 @@ function showFineOptimizationLoading() {
 
 // Update Fine Optimization Results
 function updateFineOptimizationResults(result) {
+    console.log('updateFineOptimizationResults appelée avec:', result);
+    
     // Fermer la modal de loading de l'optimisation fine
     const loadingModal = bootstrap.Modal.getInstance(document.getElementById('fineOptimizationModal'));
     if (loadingModal) {
         loadingModal.hide();
+        console.log('Modal de loading fermée');
     }
     
     // Mettre à jour le contenu de la modal existante (optimisation globale)
     const modalBody = document.querySelector('#globalOptimizationModal .modal-body');
     const modalTitle = document.querySelector('#globalOptimizationModal .modal-title');
     
+    console.log('Modal body trouvée:', !!modalBody);
+    console.log('Modal title trouvée:', !!modalTitle);
+    
     if (!modalBody || !modalTitle) {
         // Si la modal n'existe pas, créer une nouvelle
+        console.log('Modal globale non trouvée, création d\'une nouvelle modal fine');
         showFineOptimizationResults(result);
         return;
     }
@@ -1210,6 +1411,17 @@ function updateFineOptimizationResults(result) {
     
     // Mettre à jour le contenu avec les deux graphiques côte à côte
     modalBody.innerHTML = `
+                        ${result.shares_warning ? `
+                        <div class="row mb-3">
+                            <div class="col-12">
+                                <div class="alert alert-warning" role="alert">
+                                    <i class="fas fa-exclamation-triangle"></i>
+                                    <strong>Attention :</strong> ${result.message}
+                                </div>
+                            </div>
+                        </div>
+                        ` : ''}
+                        
                         <div class="row">
                             <div class="col-md-6">
                                 <h6><i class="fas fa-chart-line"></i> Comparaison des Résultats</h6>
@@ -1232,8 +1444,8 @@ function updateFineOptimizationResults(result) {
                                             </tr>
                                             <tr>
                                                 <td>Profit optimal</td>
-                                                <td>${result.global_results ? '$' + result.global_results.best_profit.toFixed(2) + '/jour' : 'N/A'}</td>
-                                                <td><strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong></td>
+                                                <td>${result.global_results ? (result.global_results.best_profit === "N/A" ? "N/A" : '$' + result.global_results.best_profit.toFixed(2) + '/jour') : 'N/A'}</td>
+                                                <td><strong class="text-success">${result.best_profit === "N/A" ? "N/A" : "$" + result.best_profit.toFixed(2) + "/jour"}</strong></td>
                                                 <td class="${result.global_results && result.best_profit > result.global_results.best_profit ? 'text-success' : result.global_results && result.best_profit < result.global_results.best_profit ? 'text-danger' : ''}">
                                                     ${result.global_results ? (result.best_profit > result.global_results.best_profit ? '+' : '') + '$' + (result.best_profit - result.global_results.best_profit).toFixed(2) + '/jour' : 'N/A'}
                                                 </td>
@@ -1366,6 +1578,15 @@ function updateFineOptimizationResults(result) {
 
 // Show Fine Optimization Results
 function showFineOptimizationResults(result) {
+    console.log('=== showFineOptimizationResults appelée ===');
+    console.log('Résultat complet:', result);
+    console.log('result.results:', result.results);
+    console.log('result.results.total_hashrate:', result.results?.total_hashrate);
+    console.log('result.results.total_power:', result.results?.total_power);
+    console.log('result.results.machine_performances:', result.results?.machine_performances);
+    if (result.results?.machine_performances && result.results.machine_performances.length > 0) {
+        console.log('Première machine:', result.results.machine_performances[0]);
+    }
     
     // Créer une modal pour afficher les résultats détaillés
     const modalHtml = `
@@ -1409,7 +1630,7 @@ function showFineOptimizationResults(result) {
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between">
                                         <span>Profit optimal:</span>
-                                        <strong class="text-success">$${result.best_profit.toFixed(2)}/jour</strong>
+                                        <strong class="text-success">${result.best_profit === "N/A" ? "N/A" : "$" + result.best_profit.toFixed(2) + "/jour"}</strong>
                                     </li>
                                     <li class="list-group-item d-flex justify-content-between">
                                         <span>Hashrate total:</span>
@@ -1723,7 +1944,7 @@ function create3DChart(container, data, result) {
     const texts = data.map((d, i) => {
         let tooltip = `Ratio Machine 1: ${d.combination[0]}<br>`;
         tooltip += `Ratio Machine 2: ${d.combination[1]}<br>`;
-        tooltip += `Profit: $${d.daily_profit.toFixed(2)}/jour<br>` +
+        tooltip += `Profit: ${d.daily_profit === "N/A" ? "N/A" : "$" + d.daily_profit.toFixed(2) + "/jour"}<br>` +
                    `Hashrate: ${d.total_hashrate.toFixed(2)} TH/s<br>` +
                    `Puissance: ${d.total_power}W`;
         return tooltip;
@@ -1760,7 +1981,7 @@ function createCommon3DChart(container, x, y, z, colors, texts, result, data, xA
     
     const layout = {
         title: {
-            text: isSmallChart ? `${xAxisTitle} vs ${yAxisTitle}` : `Visualisation 3D des Sweet Spots - Profit Optimal: $${result.best_profit.toFixed(2)}/jour`,
+            text: isSmallChart ? `${xAxisTitle} vs ${yAxisTitle}` : `Visualisation 3D des Sweet Spots - Profit Optimal: ${result.best_profit === "N/A" ? "N/A" : "$" + result.best_profit.toFixed(2) + "/jour"}`,
             font: { size: isSmallChart ? 12 : 16, color: '#ffffff' }
         },
         paper_bgcolor: '#2d3748',
@@ -1784,7 +2005,16 @@ function createCommon3DChart(container, x, y, z, colors, texts, result, data, xA
             },
             zaxis: {
                 title: 'Profit ($/jour)',
-                range: [Math.min(...z) * 1.1, Math.max(...z) * 1.1], // Étendre la plage pour utiliser plus d'espace
+                range: (() => {
+                    // Filtrer les valeurs "N/A" et calculer la plage
+                    const validZ = z.filter(val => val !== "N/A" && !isNaN(val) && val !== null);
+                    if (validZ.length > 0) {
+                        return [Math.min(...validZ) * 1.1, Math.max(...validZ) * 1.1];
+                    } else {
+                        // Si pas de valeurs valides, utiliser une plage par défaut
+                        return [-1, 1];
+                    }
+                })(),
                 gridcolor: '#4a5568',
                 zerolinecolor: '#4a5568',
                 titlefont: { color: '#ffffff', size: isSmallChart ? 10 : 12 },
@@ -2249,6 +2479,9 @@ async function loadSiteStatistics(siteId) {
         if (totalHashrate) {
             totalHashrate.textContent = `${stats.total_hashrate} TH/s`;
         }
+        // Indicateur visuel sur le bouton d'optimisation individuelle selon le nombre de machines
+        const multiOptimalBtn = document.getElementById('multiOptimalBtn');
+        // revert: pas de modification de style/texte sur le bouton ici
         
     } catch (error) {
         console.error('Error loading site statistics:', error);
@@ -2601,6 +2834,30 @@ async function calculateOptimal(type = 'economic') {
             templateId = currentObjectData?.template_id || currentMachineId;
         }
         
+        // Vérifier d'abord si la machine a des accepted shares configurées
+        try {
+            const machineData = await apiClient.get(`/machines/${templateId}`);
+            
+            if (!machineData.accepted_shares_24h || machineData.accepted_shares_24h <= 0) {
+                showNotification('⚠️ Impossible de calculer l\'optimisation : aucune accepted shares configurée pour cette machine. Configurez des shares avant d\'optimiser.', 'warning');
+                
+                // Masquer l'indicateur de calcul
+                if (statusBadge) {
+                    statusBadge.style.display = 'none';
+                }
+                return;
+            }
+        } catch (error) {
+            console.error('Erreur lors de la vérification des shares:', error);
+            showNotification('Erreur lors de la vérification des shares', 'error');
+            
+            // Masquer l'indicateur de calcul
+            if (statusBadge) {
+                statusBadge.style.display = 'none';
+            }
+            return;
+        }
+        
         // Choisir l'endpoint selon le type
         let endpoint;
         if (type === 'technical') {
@@ -2645,6 +2902,12 @@ async function calculateOptimal(type = 'economic') {
                 statusBadge.style.display = 'none';
             }, 3000);
         }
+        
+        // Masquer le bouton d'application en cas d'erreur
+        const applyBtn = document.getElementById('applyIndividualBtn');
+        if (applyBtn) {
+            applyBtn.style.display = 'none';
+        }
     }
 }
 
@@ -2656,8 +2919,15 @@ async function findOptimal() {
 
 // Update Optimization Results
 function updateOptimizationResults(data = null, type = 'economic') {
+    console.log('updateOptimizationResults appelée avec:', { data, type });
+    
     if (data) {
-        // Mettre à jour le type d'optimisation
+        // Afficher l'avertissement sur les shares si nécessaire
+        if (data.shares_warning) {
+            showNotification(data.message, 'warning');
+        }
+        
+        // Déterminer le type d'optimisation
         let typeText;
         if (type === 'technical') {
             typeText = 'Technique';
@@ -2666,18 +2936,49 @@ function updateOptimizationResults(data = null, type = 'economic') {
         } else {
             typeText = 'Économique';
         }
-        document.querySelector('.optimization-type').textContent = typeText;
         
-        document.querySelector('.optimal-ratio').textContent = parseFloat(data.optimal_ratio).toFixed(2);
+        console.log('Type d\'optimisation:', typeText);
+        console.log('Ratio optimal:', data.optimal_ratio);
+        
+        // Mettre à jour les éléments de la modal
+        const typeModalElement = document.querySelector('.optimization-type-modal');
+        const ratioModalElement = document.querySelector('.optimal-ratio-modal');
+        
+        if (typeModalElement) {
+            typeModalElement.textContent = typeText;
+            console.log('Type modal mis à jour');
+        } else {
+            console.error('Élément .optimization-type-modal non trouvé');
+        }
+        
+        if (ratioModalElement) {
+            ratioModalElement.textContent = parseFloat(data.optimal_ratio).toFixed(2);
+            console.log('Ratio modal mis à jour');
+        } else {
+            console.error('Élément .optimal-ratio-modal non trouvé');
+        }
+        
+        // Mettre à jour aussi les éléments de la page principale (pour compatibilité)
+        const mainTypeElement = document.querySelector('.optimization-type');
+        const mainRatioElement = document.querySelector('.optimal-ratio');
+        if (mainTypeElement) mainTypeElement.textContent = typeText;
+        if (mainRatioElement) mainRatioElement.textContent = parseFloat(data.optimal_ratio).toFixed(2);
         
         // Update other values if available
         if (data.all_results && data.all_results.length > 0) {
             const optimal = data.all_results.find(r => r.adjustment_ratio === data.optimal_ratio);
             if (optimal) {
-                document.querySelector('.optimal-hashrate').textContent = 
+                // Mettre à jour les éléments de la modal
+                document.querySelector('.optimal-hashrate-modal').textContent = 
                     `${parseFloat(optimal.effective_hashrate).toFixed(2)} TH/s`;
-                document.querySelector('.optimal-power').textContent = 
+                document.querySelector('.optimal-power-modal').textContent = 
                     `${Math.round(optimal.power_consumption)}W`;
+                
+                // Mettre à jour aussi les éléments de la page principale (pour compatibilité)
+                const mainHashrateElement = document.querySelector('.optimal-hashrate');
+                const mainPowerElement = document.querySelector('.optimal-power');
+                if (mainHashrateElement) mainHashrateElement.textContent = `${parseFloat(optimal.effective_hashrate).toFixed(2)} TH/s`;
+                if (mainPowerElement) mainPowerElement.textContent = `${Math.round(optimal.power_consumption)}W`;
                 
                 // Afficher/masquer les éléments selon le type
                 const efficiencyElement = document.querySelector('.result-item.efficiency');
@@ -2831,6 +3132,23 @@ function updateOptimizationResults(data = null, type = 'economic') {
                 }
             }
         }
+        
+        // Afficher la modal d'optimisation individuelle
+        console.log('Tentative d\'affichage de la modal...');
+        const modalElement = document.getElementById('individualOptimizationModal');
+        
+        if (modalElement) {
+            console.log('Modal trouvée, création de l\'instance Bootstrap...');
+            try {
+                const modal = new bootstrap.Modal(modalElement);
+                modal.show();
+                console.log('Modal affichée avec succès');
+            } catch (error) {
+                console.error('Erreur lors de l\'affichage de la modal:', error);
+            }
+        } else {
+            console.error('Modal individualOptimizationModal non trouvée dans le DOM');
+        }
     }
 }
 
@@ -2870,7 +3188,7 @@ async function testAPIConnection() {
 // Load Market Data
 async function loadMarketData() {
     try {
-        const result = await apiClient.get(`/market/current`);
+        const result = await apiClient.get(`/market/bitcoin-data`);
         updateMarketDataDisplay(result.data);
         
     } catch (error) {
@@ -3107,12 +3425,12 @@ async function loadSitesAndMachines(autoSelectFirst = true) {
         }
         
         updateSitesMachinesTree(sites, templates, siteInstances);
-        
-            // Sélectionner automatiquement le premier site seulement si demandé et si aucun objet n'est sélectionné
-    if (autoSelectFirst && sites.length > 0 && !currentObjectType) {
-        const firstSite = sites[0];
-        selectObject('site', firstSite.id, firstSite);
-    }
+        // Ne plus forcer une auto-sélection au chargement initial pour laisser la vue globale s'afficher
+        if (autoSelectFirst && sites.length > 0 && !currentObjectType) {
+            // on conserve le comportement existant pour les rechargements ciblés
+            const firstSite = sites[0];
+            selectObject('site', firstSite.id, firstSite);
+        }
         
     } catch (error) {
         console.error('Error loading sites and machines:', error);
@@ -3172,6 +3490,7 @@ function updateSitesMachinesTree(sites, templates, siteInstances) {
                                 </div>
                                 <div class="machine-specs">
                                     ${instance.template.power_nominal}W • ${instance.template.hashrate_nominal} TH/s
+                                    ${instance.accepted_shares_24h ? ` • ${instance.accepted_shares_24h} shares/jour` : ''}
                                 </div>
                             </div>
                             <div class="machine-actions">
@@ -3544,6 +3863,11 @@ async function editMachineInstance(siteId, instanceId) {
                                     <label class="form-label">Notes (optionnel)</label>
                                     <textarea class="form-control" id="editNotesInput" rows="2" placeholder="Notes sur cette instance">${instance.notes || ''}</textarea>
                                 </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Accepted Shares par jour (optionnel)</label>
+                                    <input type="number" class="form-control" id="editAcceptedSharesInput" value="${instance.accepted_shares_24h || ''}" placeholder="Ex: 650" min="0">
+                                    <small class="text-muted">Laissez vide pour utiliser la valeur du template de machine</small>
+                                </div>
                             </form>
                         </div>
                         <div class="modal-footer">
@@ -3580,11 +3904,13 @@ async function updateMachineInstance(siteId, instanceId) {
         const quantity = parseInt(document.getElementById('editQuantityInput').value);
         const customName = document.getElementById('editCustomNameInput').value;
         const notes = document.getElementById('editNotesInput').value;
+        const acceptedShares = document.getElementById('editAcceptedSharesInput').value;
         
         const instanceData = {
             quantity: quantity,
             custom_name: customName || null,
-            notes: notes || null
+            notes: notes || null,
+            accepted_shares_24h: acceptedShares ? parseInt(acceptedShares) : null
         };
         
         await apiClient.put(`/sites/${siteId}/machine-instances/${instanceId}`, instanceData);
@@ -3652,6 +3978,7 @@ function clearTemplateForm() {
     document.getElementById('templatePrice').value = '';
     document.getElementById('templateYear').value = '';
     document.getElementById('templateNotes').value = '';
+    document.getElementById('templateAcceptedShares').value = '';
 }
 
 async function loadTemplateData(templateId) {
@@ -3666,6 +3993,7 @@ async function loadTemplateData(templateId) {
         document.getElementById('templatePrice').value = template.price_cad || '';
         document.getElementById('templateYear').value = template.release_year || '';
         document.getElementById('templateNotes').value = template.notes || '';
+        document.getElementById('templateAcceptedShares').value = template.accepted_shares_24h || '';
         
     } catch (error) {
         console.error('Error loading template data:', error);
@@ -3688,7 +4016,8 @@ async function saveTemplate() {
         efficiency_base: parseFloat(document.getElementById('templateEfficiency').value),
         price_cad: document.getElementById('templatePrice').value ? parseFloat(document.getElementById('templatePrice').value) : null,
         release_year: document.getElementById('templateYear').value ? parseInt(document.getElementById('templateYear').value) : null,
-        notes: document.getElementById('templateNotes').value
+        notes: document.getElementById('templateNotes').value,
+        accepted_shares_24h: document.getElementById('templateAcceptedShares').value ? parseInt(document.getElementById('templateAcceptedShares').value) : null
     };
     
     try {
@@ -4683,14 +5012,27 @@ async function applyOptimalRatios() {
         if (machinesCount === 1) {
             showIndividualOptimizationLoading();
             showNotification('Optimisation fine: balayage précis autour du sweet spot', 'info');
-            // Lancer optimisation fine avec paramètres par défaut
-            await apiClient.post(`/sites/${currentSiteId}/fine-optimization?fine_range=0.1&fine_step=0.01`);
-            const data = await apiClient.post(`/sites/${currentSiteId}/apply-fine-optimization`);
-            // Recharger la synthèse du site pour refléter les changements
-            await loadSiteSummary(currentSiteId);
-            showNotification(`Optimisation fine appliquée avec succès à ${data.instances_updated} machine(s)`, 'success');
-            const modal = bootstrap.Modal.getInstance(document.getElementById('individualOptimizationModal'));
-            if (modal) modal.hide();
+            
+            try {
+                // Lancer optimisation fine avec paramètres par défaut
+                const result = await apiClient.post(`/sites/${currentSiteId}/fine-optimization?fine_range=0.1&fine_step=0.01`);
+                
+                // Fermer la modal de chargement
+                const loadingModal = bootstrap.Modal.getInstance(document.getElementById('individualOptimizationModal'));
+                if (loadingModal) loadingModal.hide();
+                
+                // Afficher les résultats de l'optimisation fine au lieu de l'appliquer automatiquement
+                console.log('Résultats de l\'optimisation fine reçus:', result);
+                updateFineOptimizationResults(result);
+                
+            } catch (error) {
+                console.error('Erreur lors de l\'optimisation fine:', error);
+                showNotification('Erreur lors de l\'optimisation fine: ' + error.message, 'error');
+                
+                // Fermer la modal de chargement en cas d'erreur
+                const loadingModal = bootstrap.Modal.getInstance(document.getElementById('individualOptimizationModal'));
+                if (loadingModal) loadingModal.hide();
+            }
             return;
         }
 
@@ -4876,6 +5218,79 @@ async function applyFineOptimization(siteId) {
     } catch (error) {
         console.error('Error applying fine optimization:', error);
         showNotification('Erreur lors de l\'application de l\'optimisation fine', 'error');
+    }
+}
+
+// Apply Individual Optimization
+async function applyIndividualOptimization() {
+    try {
+        // Vérifier qu'on a un site et une machine sélectionnés
+        if (!currentSiteId) {
+            showNotification('⚠️ Veuillez d\'abord sélectionner un site', 'warning');
+            return;
+        }
+        
+        if (!currentMachineId) {
+            showNotification('⚠️ Veuillez d\'abord sélectionner une machine', 'warning');
+            return;
+        }
+        
+        showNotification('Application de l\'optimisation individuelle...', 'info');
+        
+        // Récupérer le ratio optimal affiché
+        const optimalRatio = parseFloat(document.querySelector('.optimal-ratio').textContent);
+        if (isNaN(optimalRatio)) {
+            showNotification('⚠️ Impossible de récupérer le ratio optimal', 'error');
+            return;
+        }
+        
+        // Déterminer le type d'optimisation basé sur le type affiché
+        const optimizationType = document.querySelector('.optimization-type').textContent.toLowerCase();
+        let type = 'economic';
+        if (optimizationType.includes('technique')) {
+            type = 'technical';
+        } else if (optimizationType.includes('agressif')) {
+            type = 'aggressive';
+        }
+        
+        // Appliquer le ratio optimal via l'API spécifique à la machine
+        const response = await fetch(`${API_BASE}/sites/${currentSiteId}/machines/${currentMachineId}/apply-individual-optimization`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                optimal_ratio: optimalRatio,
+                type: type
+            })
+        });
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Erreur lors de l\'application du ratio optimal');
+        }
+        
+        const result = await response.json();
+        
+        showNotification(result.message, 'success');
+        
+        // Masquer le bouton d'application
+        const applyBtn = document.getElementById('applyIndividualBtn');
+        if (applyBtn) {
+            applyBtn.style.display = 'none';
+        }
+        
+        // Recharger les données du site et de la machine
+        await loadSiteSummary(currentSiteId);
+        
+        // Recharger aussi les données de la machine si elle est sélectionnée
+        if (currentObjectType === 'machine') {
+            await loadMachineDetails(currentMachineId);
+        }
+        
+    } catch (error) {
+        console.error('Error applying individual optimization:', error);
+        showNotification('Erreur lors de l\'application de l\'optimisation individuelle: ' + error.message, 'error');
     }
 }
 

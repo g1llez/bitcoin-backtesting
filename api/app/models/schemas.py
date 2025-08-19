@@ -11,6 +11,7 @@ class MachineTemplateBase(BaseModel):
     power_nominal: int = Field(..., gt=0)
     efficiency_base: Decimal = Field(..., ge=0)
     price_cad: Optional[Decimal] = Field(None, ge=0)  # Prix en CAD
+    accepted_shares_24h: Optional[int] = Field(None, gt=0, description="Shares acceptées par jour pour cette machine")
     release_date: Optional[date] = None
     is_active: bool = True
 
@@ -23,6 +24,7 @@ class MachineTemplateUpdate(BaseModel):
     power_nominal: Optional[int] = Field(None, gt=0)
     efficiency_base: Optional[Decimal] = Field(None, ge=0)
     price_cad: Optional[Decimal] = Field(None, ge=0)  # Prix en CAD
+    accepted_shares_24h: Optional[int] = Field(None, gt=0, description="Shares acceptées par jour pour cette machine")
     release_date: Optional[date] = None
     is_active: Optional[bool] = None
 
@@ -235,6 +237,7 @@ class SiteMachineInstanceUpdate(BaseModel):
     quantity: Optional[int] = Field(None, gt=0)
     custom_name: Optional[str] = Field(None, max_length=100)
     notes: Optional[str] = None
+    accepted_shares_24h: Optional[int] = Field(None, gt=0, description="Shares acceptées par jour pour cette instance")
 
 class SiteMachineInstance(SiteMachineInstanceBase):
     id: int

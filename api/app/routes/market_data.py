@@ -12,10 +12,10 @@ from sqlalchemy import text
 
 router = APIRouter()
 
-@router.get("/market/current")
-async def get_current_market_data(db: Session = Depends(get_db)):
+@router.get("/market/bitcoin-data")
+async def get_bitcoin_market_data(db: Session = Depends(get_db)):
     """
-    Récupère les données de marché actuelles (prix Bitcoin et FPPS)
+    Récupère les données de marché Bitcoin (prix et FPPS)
     avec système de cache pour éviter les limites d'API
     """
     try:
@@ -40,25 +40,7 @@ async def get_current_market_data(db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des données de marché: {str(e)}")
 
-@router.get("/market/bitcoin-price")
-async def get_bitcoin_price():
-    """
-    Récupère uniquement le prix Bitcoin actuel
-    """
-    try:
-        import requests
-        response = requests.get("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,cad")
-        if response.status_code == 200:
-            data = response.json()
-            return {
-                "usd": data["bitcoin"]["usd"],
-                "cad": data["bitcoin"]["cad"],
-                "timestamp": "2025-08-02T18:45:00Z"
-            }
-        else:
-            raise HTTPException(status_code=500, detail="Impossible de récupérer le prix Bitcoin")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur: {str(e)}")
+
 
 @router.get("/market/fpps")
 async def get_fpps_data():

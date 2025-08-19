@@ -239,27 +239,39 @@ def find_optimal_adjustment_ratio(
                 hashrate = float(efficiency[0])
                 power = int(efficiency[1])
                 
-                # Calculer les revenus avec les données du cache
+                # Calculer les revenus basés sur les accepted shares
                 daily_revenue = None
                 sats_per_hour = None
                 
-                # Utiliser les données FPPS du cache (déjà récupérées)
-                if fpps_rate is not None:
-                    # FPPS est en BTC/jour par TH/s, convertir en sats/jour par TH/s
-                    fpps_sats_per_day = int(round(float(fpps_rate) * 100000000))
-                    
-                    # Calculer les sats/heure : hashrate (TH/s) × FPPS (sats/jour/TH/s) / 24
-                    sats_per_hour = int(hashrate * fpps_sats_per_day / 24)
-                    
-                    # Convertir en CAD : sats/heure × prix Bitcoin (CAD) / 100000000
-                    if bitcoin_price is not None:
-                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
-                        daily_revenue = hourly_revenue_cad * 24
-                    
-                    # Stocker les sats/heure pour l'affichage
-                    sats_per_hour = sats_per_hour  # Déjà calculé ci-dessus
+                # Vérifier si la machine a des accepted shares configurées
+                if machine.accepted_shares_24h is not None:
+                    try:
+                        # Récupérer la difficulté du réseau
+                        import requests
+                        difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
+                        difficulty_response.raise_for_status()
+                        network_difficulty = float(difficulty_response.text)
+                        
+                        # Récupérer la récompense de bloc
+                        block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
+                        block_reward_response.raise_for_status()
+                        coinbase_reward = float(block_reward_response.text)
+                        
+                        # Calculer le revenu avec la formule CRC = C × S/D
+                        # Répartir les shares proportionnellement au hashrate de ce ratio
+                        machine_shares = float(machine.accepted_shares_24h) * (hashrate / float(machine.hashrate_nominal))
+                        btc_earned_24h = (coinbase_reward * machine_shares) / network_difficulty
+                        
+                        if bitcoin_price is not None:
+                            daily_revenue = btc_earned_24h * bitcoin_price
+                            # Calculer les sats/heure pour l'affichage
+                            sats_per_hour = int((btc_earned_24h * 100000000) / 24)
+                    except Exception:
+                        # En cas d'erreur, revenu non calculable
+                        daily_revenue = None
+                        sats_per_hour = None
                 else:
-                    # Pas de FPPS => pas de revenus calculables
+                    # Pas d'accepted shares => pas de revenus calculables
                     daily_revenue = None
                     sats_per_hour = None
                 
@@ -293,9 +305,9 @@ def find_optimal_adjustment_ratio(
                     "efficiency_th_per_watt": round(efficiency_ratio, 6),
                     "efficiency_j_per_th": round(power / hashrate, 2) if hashrate > 0 else 0,
                     "sats_per_hour": sats_per_hour,
-                    "daily_revenue": round(daily_revenue, 2) if daily_revenue is not None else None,
+                    "daily_revenue": "N/A" if daily_revenue is None else round(daily_revenue, 2),
                     "daily_electricity_cost": round(daily_electricity_cost, 2) if daily_electricity_cost is not None else None,
-                    "daily_profit": round(daily_profit, 2) if daily_profit is not None else None
+                    "daily_profit": "N/A" if daily_profit is None else round(daily_profit, 2)
                 }
                 results.append(result_data)
                 
@@ -350,26 +362,39 @@ def find_optimal_adjustment_ratio(
                 hashrate = float(efficiency[0])
                 power = int(efficiency[1])
                 
-                # Calculer les revenus avec les données du cache
+                # Calculer les revenus basés sur les accepted shares
                 daily_revenue = None
                 sats_per_hour = None
                 
-                # Utiliser les données FPPS du cache (déjà récupérées)
-                if fpps_rate is not None:
-                    # FPPS est en BTC/jour par TH/s, convertir en sats/jour par TH/s
-                    fpps_sats_per_day = int(round(float(fpps_rate) * 100000000))
-                    
-                    # Calculer les sats/heure : hashrate (TH/s) × FPPS (sats/jour/TH/s) / 24
-                    sats_per_hour = int(hashrate * fpps_sats_per_day / 24)
-                    
-                    # Convertir en CAD : sats/heure × prix Bitcoin (CAD) / 100000000
-                    if bitcoin_price is not None:
-                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
-                        daily_revenue = hourly_revenue_cad * 24
-                    
-                    # Stocker les sats/heure pour l'affichage
-                    sats_per_hour = sats_per_hour  # Déjà calculé ci-dessus
+                # Vérifier si la machine a des accepted shares configurées
+                if machine.accepted_shares_24h is not None:
+                    try:
+                        # Récupérer la difficulté du réseau
+                        import requests
+                        difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
+                        difficulty_response.raise_for_status()
+                        network_difficulty = float(difficulty_response.text)
+                        
+                        # Récupérer la récompense de bloc
+                        block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
+                        block_reward_response.raise_for_status()
+                        coinbase_reward = float(block_reward_response.text)
+                        
+                        # Calculer le revenu avec la formule CRC = C × S/D
+                        # Répartir les shares proportionnellement au hashrate de ce ratio
+                        machine_shares = float(machine.accepted_shares_24h) * (hashrate / float(machine.hashrate_nominal))
+                        btc_earned_24h = (coinbase_reward * machine_shares) / network_difficulty
+                        
+                        if bitcoin_price is not None:
+                            daily_revenue = btc_earned_24h * bitcoin_price
+                            # Calculer les sats/heure pour l'affichage
+                            sats_per_hour = int((btc_earned_24h * 100000000) / 24)
+                    except Exception:
+                        # En cas d'erreur, revenu non calculable
+                        daily_revenue = None
+                        sats_per_hour = None
                 else:
+                    # Pas d'accepted shares => pas de revenus calculables
                     daily_revenue = None
                     sats_per_hour = None
                 
@@ -418,11 +443,21 @@ def find_optimal_adjustment_ratio(
             continue
     
     
+    # Déterminer le message selon la disponibilité des shares
+    if max_profit == "N/A" or max_profit is None:
+        message = "⚠️ Aucun profit calculable car pas d'accepted shares configurées. Configurez des shares pour voir les profits optimaux."
+        shares_warning = True
+    else:
+        message = f"Analyse des ratios terminée. Ratio optimal: {optimal_ratio}"
+        shares_warning = False
+    
     return {
         "machine_id": machine_id,
         "optimal_ratio": optimal_ratio,
-        "max_daily_profit": (round(max_profit, 2) if max_profit is not None else None),
-        "all_results": results
+        "max_daily_profit": "N/A" if max_profit == "N/A" else (round(max_profit, 2) if max_profit is not None else None),
+        "all_results": results,
+        "message": message,
+        "shares_warning": shares_warning
     }
 
 def get_available_ratios(machine_id: int, db: Session):
@@ -511,15 +546,33 @@ def get_machine_ratio_analysis(
                 hashrate = float(efficiency[0])
                 power = int(efficiency[1])
                 
-                # Calculer les revenus
+                # Calculer les revenus basés sur les accepted shares
                 daily_revenue = None
-                if market_data["fpps_rate"] is not None:
-                    fpps_sats_per_day = int(float(market_data["fpps_rate"]) * 100000000)
-                    sats_per_hour = int(hashrate * fpps_sats_per_day / 24)
-                    
-                    if bitcoin_price is not None:
-                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
-                        daily_revenue = hourly_revenue_cad * 24
+                
+                # Vérifier si la machine a des accepted shares configurées
+                if machine.accepted_shares_24h is not None:
+                    try:
+                        # Récupérer la difficulté du réseau
+                        import requests
+                        difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
+                        difficulty_response.raise_for_status()
+                        network_difficulty = float(difficulty_response.text)
+                        
+                        # Récupérer la récompense de bloc
+                        block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
+                        block_reward_response.raise_for_status()
+                        coinbase_reward = float(block_reward_response.text)
+                        
+                        # Calculer le revenu avec la formule CRC = C × S/D
+                        # Répartir les shares proportionnellement au hashrate de ce ratio
+                        machine_shares = float(machine.accepted_shares_24h) * (hashrate / float(machine.hashrate_nominal))
+                        btc_earned_24h = (coinbase_reward * machine_shares) / network_difficulty
+                        
+                        if bitcoin_price is not None:
+                            daily_revenue = btc_earned_24h * bitcoin_price
+                    except Exception:
+                        # En cas d'erreur, revenu non calculable
+                        daily_revenue = None
                 
                 # Calculer les coûts d'électricité avec paliers
                 daily_power_kwh = (power * 24) / 1000
@@ -544,9 +597,9 @@ def get_machine_ratio_analysis(
                     "ratio": ratio,
                     "hashrate": hashrate,
                     "power": power,
-                    "daily_revenue": round(daily_revenue, 2) if daily_revenue is not None else None,
+                    "daily_revenue": "N/A" if daily_revenue is None else round(daily_revenue, 2),
                     "daily_cost": round(daily_electricity_cost, 2) if daily_electricity_cost is not None else None,
-                    "daily_profit": round(daily_profit, 2) if daily_profit is not None else None,
+                    "daily_profit": "N/A" if daily_profit is None else round(daily_profit, 2),
                     "efficiency_th_per_watt": round(hashrate / power, 4) if power > 0 else 0
                 })
                     
@@ -557,12 +610,13 @@ def get_machine_ratio_analysis(
         "machine_id": machine_id,
         "machine_model": machine.model,
         "bitcoin_price": bitcoin_price,
-        "fpps_rate": market_data["fpps_rate"],
+        "accepted_shares_24h": machine.accepted_shares_24h,
         "electricity_tier1_rate": electricity_tier1_rate,
         "electricity_tier2_rate": electricity_tier2_rate,
         "electricity_tier1_limit": electricity_tier1_limit,
         "results": results,
-        "available_ratios": available_ratios
+        "available_ratios": available_ratios,
+        "revenue_note": "Revenus calculés avec la formule CRC = C × S/D basée sur les accepted shares" if machine.accepted_shares_24h is not None else "Revenus non calculables - configurez les accepted shares pour cette machine"
     }
 
 @router.get("/efficiency/machines/{machine_id}/available-ratios")
@@ -638,18 +692,37 @@ def find_optimal_efficiency_ratio(
                 daily_profit = None
                 sats_per_hour = None
                 
-                # Calculer les revenus avec FPPS
-                if fpps_rate is not None:
-                    # FPPS est en BTC/jour par TH/s, convertir en sats/jour par TH/s
-                    fpps_sats_per_day = int(round(float(fpps_rate) * 100000000))
-                    
-                    # Calculer les sats/heure : hashrate (TH/s) × FPPS (sats/jour/TH/s) / 24
-                    sats_per_hour = int(hashrate * fpps_sats_per_day / 24)
-                    
-                    # Convertir en CAD : sats/heure × prix Bitcoin (CAD) / 100000000
-                    if bitcoin_price is not None:
-                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
-                        daily_revenue = hourly_revenue_cad * 24
+                # Calculer les revenus basés sur les accepted shares
+                if machine.accepted_shares_24h is not None:
+                    try:
+                        # Récupérer la difficulté du réseau
+                        import requests
+                        difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
+                        difficulty_response.raise_for_status()
+                        network_difficulty = float(difficulty_response.text)
+                        
+                        # Récupérer la récompense de bloc
+                        block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
+                        block_reward_response.raise_for_status()
+                        coinbase_reward = float(block_reward_response.text)
+                        
+                        # Calculer le revenu avec la formule CRC = C × S/D
+                        # Répartir les shares proportionnellement au hashrate de ce ratio
+                        machine_shares = float(machine.accepted_shares_24h) * (hashrate / float(machine.hashrate_nominal))
+                        btc_earned_24h = (coinbase_reward * machine_shares) / network_difficulty
+                        
+                        if bitcoin_price is not None:
+                            daily_revenue = btc_earned_24h * bitcoin_price
+                            # Calculer les sats/heure pour l'affichage
+                            sats_per_hour = int((btc_earned_24h * 100000000) / 24)
+                    except Exception:
+                        # En cas d'erreur, revenu non calculable
+                        daily_revenue = None
+                        sats_per_hour = None
+                else:
+                    # Pas d'accepted shares => pas de revenus calculables
+                    daily_revenue = None
+                    sats_per_hour = None
                 
                 # Calculer les coûts d'électricité avec paliers
                 daily_power_kwh = (power * 24) / 1000
@@ -677,9 +750,9 @@ def find_optimal_efficiency_ratio(
                     "efficiency_th_per_watt": round(efficiency_ratio, 6),
                     "efficiency_j_per_th": round(power / hashrate, 2) if hashrate > 0 else 0,
                     "sats_per_hour": sats_per_hour,
-                    "daily_revenue": round(daily_revenue, 2) if daily_revenue is not None else None,
+                    "daily_revenue": "N/A" if daily_revenue is None else round(daily_revenue, 2),
                     "daily_electricity_cost": round(daily_electricity_cost, 2) if daily_electricity_cost is not None else None,
-                    "daily_profit": round(daily_profit, 2) if daily_profit is not None else None
+                    "daily_profit": "N/A" if daily_profit is None else round(daily_profit, 2)
                 }
                 results.append(result_data)
                 
@@ -694,11 +767,24 @@ def find_optimal_efficiency_ratio(
     if optimal_ratio is None:
         raise HTTPException(status_code=400, detail="Impossible de calculer l'optimal")
     
+    # Déterminer le message selon la disponibilité des shares
+    # Vérifier si au moins un résultat a des profits calculables
+    has_profitable_results = any(r["daily_profit"] != "N/A" and r["daily_profit"] is not None for r in results)
+    
+    if not has_profitable_results:
+        message = "⚠️ Aucun profit calculable car pas d'accepted shares configurées. Configurez des shares pour voir les profits optimaux."
+        shares_warning = True
+    else:
+        message = f"Ratio optimal trouvé: {optimal_ratio} (maximise l'efficacité TH/s par Watt)"
+        shares_warning = False
+    
     return {
         "machine_id": machine_id,
         "optimal_ratio": optimal_ratio,
         "max_efficiency_th_per_watt": round(max_efficiency, 6),
-        "all_results": results
+        "all_results": results,
+        "message": message,
+        "shares_warning": shares_warning
     }
 
 @router.get("/efficiency/machines/{machine_id}/optimal-sats")
@@ -753,18 +839,37 @@ def find_optimal_sats_ratio(
                 daily_electricity_cost = None
                 daily_profit = None
                 
-                # Calculer les revenus avec FPPS
-                if fpps_rate is not None:
-                    # FPPS est en BTC/jour par TH/s, convertir en sats/jour par TH/s
-                    fpps_sats_per_day = int(round(float(fpps_rate) * 100000000))
-                    
-                    # Calculer les sats/heure : hashrate (TH/s) × FPPS (sats/jour/TH/s) / 24
-                    sats_per_hour = int(hashrate * fpps_sats_per_day / 24)
-                    
-                    # Convertir en CAD : sats/heure × prix Bitcoin (CAD) / 100000000
-                    if bitcoin_price is not None:
-                        hourly_revenue_cad = sats_per_hour * bitcoin_price / 100000000
-                        daily_revenue = hourly_revenue_cad * 24
+                # Calculer les revenus basés sur les accepted shares
+                if machine.accepted_shares_24h is not None:
+                    try:
+                        # Récupérer la difficulté du réseau
+                        import requests
+                        difficulty_response = requests.get("https://blockchain.info/q/getdifficulty", timeout=10)
+                        difficulty_response.raise_for_status()
+                        network_difficulty = float(difficulty_response.text)
+                        
+                        # Récupérer la récompense de bloc
+                        block_reward_response = requests.get("https://blockchain.info/q/bcperblock", timeout=10)
+                        block_reward_response.raise_for_status()
+                        coinbase_reward = float(block_reward_response.text)
+                        
+                        # Calculer le revenu avec la formule CRC = C × S/D
+                        # Répartir les shares proportionnellement au hashrate de ce ratio
+                        machine_shares = float(machine.accepted_shares_24h) * (hashrate / float(machine.hashrate_nominal))
+                        btc_earned_24h = (coinbase_reward * machine_shares) / network_difficulty
+                        
+                        if bitcoin_price is not None:
+                            daily_revenue = btc_earned_24h * bitcoin_price
+                            # Calculer les sats/heure pour l'affichage
+                            sats_per_hour = int((btc_earned_24h * 100000000) / 24)
+                    except Exception:
+                        # En cas d'erreur, revenu non calculable
+                        daily_revenue = None
+                        sats_per_hour = None
+                else:
+                    # Pas d'accepted shares => pas de revenus calculables
+                    daily_revenue = None
+                    sats_per_hour = None
                 
                 # Calculer les coûts d'électricité avec paliers
                 daily_power_kwh = (power * 24) / 1000
@@ -792,24 +897,39 @@ def find_optimal_sats_ratio(
                     "efficiency_th_per_watt": round(efficiency_ratio, 6),
                     "efficiency_j_per_th": round(power / hashrate, 2) if hashrate > 0 else 0,
                     "sats_per_hour": sats_per_hour,
-                    "daily_revenue": round(daily_revenue, 2) if daily_revenue is not None else None,
+                    "daily_revenue": "N/A" if daily_revenue is None else round(daily_revenue, 2),
                     "daily_electricity_cost": round(daily_electricity_cost, 2) if daily_electricity_cost is not None else None,
-                    "daily_profit": round(daily_profit, 2) if daily_profit is not None else None
+                    "daily_profit": "N/A" if daily_profit is None else round(daily_profit, 2)
                 }
                 results.append(result_data)
                 
                 # Trouver le ratio qui maximise les sats/heure
-                if sats_per_hour > max_sats_per_hour:
+                if sats_per_hour is not None and sats_per_hour > max_sats_per_hour:
                     max_sats_per_hour = sats_per_hour
                     optimal_ratio = ratio
                 
         except Exception as e:
             continue
     
+    # Si aucun ratio optimal basé sur les sats n'a été trouvé (pas de shares configurées)
+    # utiliser le premier ratio valide avec des données "N/A"
+    if optimal_ratio is None and results:
+        optimal_ratio = results[0]["adjustment_ratio"]
+    
     if optimal_ratio is None:
-        raise HTTPException(status_code=404, detail="Aucun ratio optimal trouvé")
+        raise HTTPException(status_code=400, detail="Aucun ratio valide trouvé")
+    
+    # Déterminer le message selon la disponibilité des shares
+    if max_sats_per_hour == float('-inf'):
+        message = "⚠️ Aucun profit calculable car pas d'accepted shares configurées. Configurez des shares pour voir les profits optimaux."
+        shares_warning = True
+    else:
+        message = f"Ratio optimal trouvé: {optimal_ratio} (maximise les sats/heure)"
+        shares_warning = False
     
     return {
         "optimal_ratio": optimal_ratio,
-        "all_results": results
+        "all_results": results,
+        "message": message,
+        "shares_warning": shares_warning
     } 
